@@ -1,0 +1,5380 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Rebase Grid API",
+    "description": "REST API for accessing power system data from TSOs worldwide.\n\n## Multi-Source Architecture\n\nEach area can have **multiple data sources** (e.g., ENTSO-E, Energy-Charts).\nAll data endpoints accept an optional `source` query parameter to select which source to query.\nIf omitted, the area's preferred source is used (configured per data type).\n\nUse `GET /v1/areas` to discover available countries, bidding zones, control\nareas, synchronous areas, and source coverage. Legacy `/v1/zone/*` metadata\npaths remain available for existing clients.\n\n## Data Types\n\n| Type | Unit | Description |\n|---|---|---|\n| **Production** | MW | Generation breakdown by production type |\n| **Statistics** | varies | Period aggregate/reference datasets such as installed generation capacity |\n| **Consumption** | MW | Total system load |\n| **Price** | EUR/MWh | Day-ahead spot market price |\n| **Exchange** | MW | Cross-border physical flows |\n| **Frequency** | Hz | Grid frequency (per-second or per-minute) |\n\n## Geopolygons\n\nVersioned country borders, ENTSO-E bidding zones, ENTSO-E control areas, and a\nlicense-clean electricitymaps zone layer are served under `/v1/geo` as raw\nGeoJSON (`Content-Type: application/geo+json`), ready to drop straight into\ngeopandas, folium, leaflet, and QGIS without unwrapping. Each dataset is\nversioned by ISO date and content hash (SHA256); request `?version=YYYY-MM-DD`\nto pin, or omit for `latest`. Filter features with `?country=` (matches\n`properties.countryKey`) or `?ids=` (comma-separated, matched against the\ndataset's `feature_id_field`).\n\nUse `GET /v1/geo` to list registered datasets — currently `world_zones`,\n`entsoe_cty`, `entsoe_bzn`, and `entsoe_cta`.\n\n## Areas and Assets\n\n`/v1/areas` is the canonical metadata surface for countries, bidding zones,\ncontrol areas, synchronous areas, and market-coupling areas. Country area ids\nuse ISO 3166-1 alpha-2 codes.\n\n`/v1/assets` lists physical infrastructure assets with GeoJSON geometry. The\nfirst asset class is GEM operating power plants.\n\n## Time Range\n\nAll data endpoints accept `start` and `end` query parameters (ISO 8601 datetime).\nMost endpoints default to the last 24 hours. Statistics endpoints default to\ndataset-specific historical windows; installed capacity defaults to\n`start=2015-01-01` because capacity is slow-moving reference data.\n\n## Sources\n\nData is collected from 70+ parser modules including ENTSO-E, Energy-Charts (Fraunhofer ISE), Fingrid, SVK (Svenska Kraftnat), Statnett, EIA, BMRS, and many more.\n",
+    "version": "0.2.0"
+  },
+  "servers": [
+    {
+      "url": "https://grid.rebase.energy/api",
+      "description": "API"
+    }
+  ],
+  "paths": {
+    "/v1/sources": {
+      "get": {
+        "tags": [
+          "Data Sources"
+        ],
+        "summary": "List Sources",
+        "description": "List every ``(source, variable)`` pair reachable for ``zone_key``.\n\nFor each pair the response includes the source's upstream cadence\n(``granularity``), the ENTSO-E document type it is compared against\n(``entsoe_baseline``), a free-text note on definitional differences\n(``delta_vs_baseline``), the timedatamodel provenance, and a\n``default`` flag for the zone's default source per variable.\n\nSources with no entry in ``config/sources.yaml`` still appear (so\noperators can see the zone references them) but with null metadata.",
+        "operationId": "list_sources_v1_sources_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "zone_key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Zone to scope the response to (e.g. ``DE``, ``FR``, ``GB``). Required.",
+              "title": "Zone Key"
+            },
+            "description": "Zone to scope the response to (e.g. ``DE``, ``FR``, ``GB``). Required."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoneSourcesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/geo": {
+      "get": {
+        "tags": [
+          "Geo"
+        ],
+        "summary": "List Geo Datasets",
+        "description": "List every registered geopolygon dataset with summary metadata.\n\nUse this endpoint to discover which datasets are available. Per-feature\nprovenance is omitted from this response (it can be 10s of KB per\ndataset) — fetch ``GET /v1/geo/{name}`` for the full manifest.",
+        "operationId": "list_geo_datasets_v1_geo_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional kind filter, e.g. 'zone', 'bidding_zone', 'control_area', 'country'",
+              "title": "Kind"
+            },
+            "description": "Optional kind filter, e.g. 'zone', 'bidding_zone', 'control_area', 'country'"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeoDatasetListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/geo/{name}": {
+      "get": {
+        "tags": [
+          "Geo"
+        ],
+        "summary": "Get Geo Dataset",
+        "description": "Return the full manifest for a dataset — including per-feature provenance.\n\nResolves to the ``latest`` version by default; pass ``?version=2026-04-11``\nto pin. 404 if the dataset or version is unknown.",
+        "operationId": "get_geo_dataset_v1_geo__name__get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Pin to a specific version (ISO date). Defaults to 'latest'.",
+              "title": "Version"
+            },
+            "description": "Pin to a specific version (ISO date). Defaults to 'latest'."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeoDatasetManifest"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/geo/{name}/features": {
+      "get": {
+        "tags": [
+          "Geo"
+        ],
+        "summary": "Get Geo Features",
+        "description": "Return the dataset's features as a raw GeoJSON FeatureCollection.\n\nThe response is a GeoJSON FeatureCollection (not an API envelope), served\nwith ``Content-Type: application/geo+json`` so it drops straight into\ngeospatial tooling:\n\n```python\nimport geopandas as gpd\ngdf = gpd.read_file(\"https://.../v1/geo/world_zones/features\")\n```\n\n```python\nimport folium\nm = folium.Map()\nfolium.GeoJson(\"https://.../v1/geo/entsoe_bzn/features?country=DE\").add_to(m)\n```\n\nThe ``country`` and ``ids`` filters compose (intersection). With neither\nfilter set, the full FeatureCollection is returned.",
+        "operationId": "get_geo_features_v1_geo__name__features_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Pin to a specific version (ISO date). Defaults to 'latest'.",
+              "title": "Version"
+            },
+            "description": "Pin to a specific version (ISO date). Defaults to 'latest'."
+          },
+          {
+            "name": "country",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter features by country code (matches properties.countryKey exactly).",
+              "title": "Country"
+            },
+            "description": "Filter features by country code (matches properties.countryKey exactly)."
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated feature ids. Matched against the dataset's feature_id_field (zoneName for world_zones, eic_code for entsoe_* datasets).",
+              "title": "Ids"
+            },
+            "description": "Comma-separated feature ids. Matched against the dataset's feature_id_field (zoneName for world_zones, eic_code for entsoe_* datasets)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "GeoJSON FeatureCollection",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/geo+json": {
+                "schema": {
+                  "type": "object"
+                },
+                "example": {
+                  "type": "FeatureCollection",
+                  "name": "world_zones",
+                  "crs": {
+                    "type": "name",
+                    "properties": {
+                      "name": "urn:ogc:def:crs:OGC:1.3:CRS84"
+                    }
+                  },
+                  "features": [
+                    {
+                      "type": "Feature",
+                      "properties": {
+                        "zoneName": "SE-SE3",
+                        "countryKey": "SE",
+                        "countryName": "Sweden"
+                      },
+                      "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                          [
+                            [
+                              11,
+                              58
+                            ],
+                            [
+                              18,
+                              58
+                            ],
+                            [
+                              18,
+                              62
+                            ],
+                            [
+                              11,
+                              62
+                            ],
+                            [
+                              11,
+                              58
+                            ]
+                          ]
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown dataset or version"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/geo/{name}/features/{feature_id}": {
+      "get": {
+        "tags": [
+          "Geo"
+        ],
+        "summary": "Get Geo Feature",
+        "description": "Return a single feature as a raw GeoJSON ``Feature``.\n\nThe ``feature_id`` is matched against the dataset's ``feature_id_field``:\n``zoneName`` for ``world_zones`` (e.g. ``FR``, ``SE-SE3``), ``eic_code``\nfor the ENTSO-E datasets (e.g. ``10YFR-RTE------C``).",
+        "operationId": "get_geo_feature_v1_geo__name__features__feature_id__get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "feature_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Feature Id"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Pin to a specific version (ISO date). Defaults to 'latest'.",
+              "title": "Version"
+            },
+            "description": "Pin to a specific version (ISO date). Defaults to 'latest'."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "GeoJSON Feature",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/geo+json": {
+                "schema": {
+                  "type": "object"
+                },
+                "example": {
+                  "type": "Feature",
+                  "properties": {
+                    "zoneName": "SE-SE3",
+                    "countryKey": "SE",
+                    "countryName": "Sweden"
+                  },
+                  "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [
+                      [
+                        [
+                          11,
+                          58
+                        ],
+                        [
+                          18,
+                          58
+                        ],
+                        [
+                          18,
+                          62
+                        ],
+                        [
+                          11,
+                          62
+                        ],
+                        [
+                          11,
+                          58
+                        ]
+                      ]
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown dataset, version, or feature id"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/areas": {
+      "get": {
+        "tags": [
+          "Areas"
+        ],
+        "summary": "List Areas",
+        "description": "List canonical areas exposed by the API.\n\nAreas generalise the older \"zone\" concept. They include countries,\nbidding zones, control areas, synchronous areas, and market-coupling\nareas. Existing time-series endpoints still use zone keys in their path;\nthe area metadata tells clients what kind of area a key represents.",
+        "operationId": "list_areas_v1_areas_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "area_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional area type filter, for example country, bidding_zone, control_area, synchronous_area, or market_coupling_area.",
+              "title": "Area Type"
+            },
+            "description": "Optional area type filter, for example country, bidding_zone, control_area, synchronous_area, or market_coupling_area."
+          },
+          {
+            "name": "country_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional ISO 3166-1 alpha-2 country filter.",
+              "title": "Country Code"
+            },
+            "description": "Optional ISO 3166-1 alpha-2 country filter."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AreaListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/areas/{area_id}": {
+      "get": {
+        "tags": [
+          "Areas"
+        ],
+        "summary": "Get Area",
+        "description": "Get metadata for one canonical area.",
+        "operationId": "get_area_v1_areas__area_id__get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "area_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Area Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AreaResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/areas/{area_id}/sources": {
+      "get": {
+        "tags": [
+          "Areas"
+        ],
+        "summary": "Get Area Sources",
+        "description": "List configured data sources for a zone-derived area.\n\nGenerated aggregate areas such as synchronous areas and SDAC have no direct\ntime-series source configuration yet, so they return an empty source list.",
+        "operationId": "get_area_sources_v1_areas__area_id__sources_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "area_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Area Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AreaSourcesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/areas/{area_id}/coverage": {
+      "get": {
+        "tags": [
+          "Areas"
+        ],
+        "summary": "Get Area Coverage",
+        "description": "Discover data availability for a configured zone-derived area.",
+        "operationId": "get_area_coverage_v1_areas__area_id__coverage_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "area_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Area Id"
+            }
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Bucket size: '1h', '1d', or '1w'.",
+              "default": "1d",
+              "title": "Resolution"
+            },
+            "description": "Bucket size: '1h', '1d', or '1w'."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of coverage window (ISO 8601). Default: 30 days ago.",
+              "title": "Start"
+            },
+            "description": "Start of coverage window (ISO 8601). Default: 30 days ago."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of coverage window (ISO 8601). Default: now.",
+              "title": "End"
+            },
+            "description": "End of coverage window (ISO 8601). Default: now."
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to a single source (e.g. 'entsoe'). If omitted, all configured sources are checked.",
+              "title": "Source"
+            },
+            "description": "Filter to a single source (e.g. 'entsoe'). If omitted, all configured sources are checked."
+          },
+          {
+            "name": "provenance",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by provenance: 'measured', 'energy_balance', 'estimated', 'modeled'.",
+              "title": "Provenance"
+            },
+            "description": "Filter by provenance: 'measured', 'energy_balance', 'estimated', 'modeled'."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AreaCoverageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/assets": {
+      "get": {
+        "tags": [
+          "Assets"
+        ],
+        "summary": "List Assets",
+        "description": "List infrastructure assets.\n\nThe initial asset class is GEM operating power plants. The schema is\ngeneric enough for point assets and future line assets: geometry is\nGeoJSON and asset-specific fields live under ``properties``.",
+        "operationId": "list_assets_v1_assets_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional asset type filter. Current value: power_plant.",
+              "title": "Asset Type"
+            },
+            "description": "Optional asset type filter. Current value: power_plant."
+          },
+          {
+            "name": "area_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional area id filter, currently country-level for GEM assets.",
+              "title": "Area Id"
+            },
+            "description": "Optional area id filter, currently country-level for GEM assets."
+          },
+          {
+            "name": "country_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional ISO 3166-1 alpha-2 country filter.",
+              "title": "Country Code"
+            },
+            "description": "Optional ISO 3166-1 alpha-2 country filter."
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional source filter. Current value: gem.",
+              "title": "Source"
+            },
+            "description": "Optional source filter. Current value: gem."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 1,
+              "default": 1000,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/assets/{asset_id}": {
+      "get": {
+        "tags": [
+          "Assets"
+        ],
+        "summary": "Get Asset",
+        "description": "Get one asset by stable asset id.",
+        "operationId": "get_asset_v1_assets__asset_id__get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/areas/{area_id}/assets": {
+      "get": {
+        "tags": [
+          "Assets"
+        ],
+        "summary": "List Area Assets",
+        "description": "List assets located in an area.",
+        "operationId": "list_area_assets_v1_areas__area_id__assets_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "area_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Area Id"
+            }
+          },
+          {
+            "name": "asset_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional asset type filter.",
+              "title": "Asset Type"
+            },
+            "description": "Optional asset type filter."
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional source filter.",
+              "title": "Source"
+            },
+            "description": "Optional source filter."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 1,
+              "default": 1000,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/zone/list": {
+      "get": {
+        "tags": [
+          "Zones"
+        ],
+        "summary": "List Zones",
+        "description": "List all zones with metadata and configured data sources.\n\nReturns every zone visible in the current release environment —\nfeatures still staged ``dev`` in ``config/releases.yaml`` are\nhidden from the production API. See\n:func:`psd.config.reading.load_visible_zones`.\n\nUse this endpoint to discover which zones and sources are available\nbefore querying data endpoints.",
+        "operationId": "list_zones_v1_zone_list_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoneListResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/v1/zone/get/{zone_key}": {
+      "get": {
+        "tags": [
+          "Zones"
+        ],
+        "summary": "Get Zone",
+        "description": "Get metadata for a specific zone.\n\nReturns the zone's name, country, timezone, configured data sources,\nand preferred source per data type.\n\nThe `sources` field shows which data types each source provides\n(e.g., `{\"entsoe\": [\"production\", \"consumption\", \"price\"], \"fingrid\": [\"frequency\"]}`).\n\nThe `api_source` field shows which source is returned by default\nfor each data type when no `?source=` parameter is specified.\n\nExample zone keys: `DE`, `SE-SE1`, `NO-NO1`, `FI`, `US-NY-NYIS`.",
+        "operationId": "get_zone_v1_zone_get__zone_key__get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "zone_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Zone Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoneResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/zone/{zone_key}/sources": {
+      "get": {
+        "tags": [
+          "Zones"
+        ],
+        "summary": "Get Zone Sources Endpoint",
+        "description": "List every data source available for a zone.\n\nReturns one entry per `(source, variable)` pair configured for the zone,\nwith granularity, provenance, and a `default` flag indicating which source\nis used when no `?source=` parameter is specified.\n\nExample zone keys: `DE`, `SE-SE1`, `FI`.",
+        "operationId": "get_zone_sources_endpoint_v1_zone__zone_key__sources_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "zone_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Zone Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoneSourcesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/zone/{zone_key}/coverage": {
+      "get": {
+        "tags": [
+          "Zones"
+        ],
+        "summary": "Get Zone Coverage",
+        "description": "Discover data availability for a zone as a plottable coverage grid.\n\nReturns bucketed point counts for every time series configured for the\nzone. Designed for direct visualisation as a heatmap:\n\n- **y-axis**: each entry in `series` (one per time series)\n- **x-axis**: the shared `buckets` array (time)\n- **cell value**: `counts[i]` — number of data points in that bucket (0 = missing)\n\nUse `resolution` to control bucket granularity (`1h`, `1d`, `1w`).\nUse `source` and/or `provenance` to narrow which series appear.",
+        "operationId": "get_zone_coverage_v1_zone__zone_key__coverage_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "zone_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Zone Key"
+            }
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Bucket size: '1h', '1d', or '1w'.",
+              "default": "1d",
+              "title": "Resolution"
+            },
+            "description": "Bucket size: '1h', '1d', or '1w'."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of coverage window (ISO 8601). Default: 30 days ago.",
+              "title": "Start"
+            },
+            "description": "Start of coverage window (ISO 8601). Default: 30 days ago."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of coverage window (ISO 8601). Default: now.",
+              "title": "End"
+            },
+            "description": "End of coverage window (ISO 8601). Default: now."
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to a single source (e.g. 'entsoe'). If omitted, all configured sources are checked.",
+              "title": "Source"
+            },
+            "description": "Filter to a single source (e.g. 'entsoe'). If omitted, all configured sources are checked."
+          },
+          {
+            "name": "provenance",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by provenance: 'measured', 'energy_balance', 'estimated', 'modeled'.",
+              "title": "Provenance"
+            },
+            "description": "Filter by provenance: 'measured', 'energy_balance', 'estimated', 'modeled'."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/exchange/list": {
+      "get": {
+        "tags": [
+          "Physical flow pairs"
+        ],
+        "summary": "List physical-flow pairs",
+        "description": "List all configured physical-flow pairs.\n\nReturns every physical-flow pair key in `<zone_from>-><zone_to>`\nformat (cross-border and inter-zonal — ENTSO-E TR 12.1.G *Physical Flow*).\nUse these keys with `GET /v1/exchange/flows/{key}` to query flow data\nfor a specific pair, or pass a zone key to get all pairs involving\nthat zone. URL paths keep the legacy `exchange` slug for backwards\ncompatibility.\n\nPairs whose endpoints are not visible in the current environment are\nomitted (e.g. dev-only zones are excluded from the prod response).",
+        "operationId": "list_exchanges_v1_exchange_list_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExchangeListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/exchange/get/{exchange_key}": {
+      "get": {
+        "tags": [
+          "Physical flow pairs"
+        ],
+        "summary": "Get physical-flow pair metadata",
+        "description": "Get metadata for a specific physical-flow pair.\n\nReturns the pair's zone endpoints and configured data sources in\npriority order. The first source is the default used by\n`GET /v1/exchange/flows/{key}` when no `?source=` is specified.\n\nExample pair keys: `DE->FR`, `SE-SE3->SE-SE4`, `GB->FR`.\nUse `GET /v1/exchanges` to list all valid keys.",
+        "operationId": "get_exchange_v1_exchange_get__exchange_key__get",
+        "parameters": [
+          {
+            "name": "exchange_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Exchange Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExchangeSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/exchange/{exchange_key}/sources": {
+      "get": {
+        "tags": [
+          "Physical flow pairs"
+        ],
+        "summary": "List sources for a physical-flow pair",
+        "description": "List data sources available for a physical-flow pair.\n\nReturns every source configured for the pair in priority order.\nThe first source is the default used by `GET /v1/exchange/flows/{key}`\nwhen no `?source=` is specified.\n\nExample pair keys: `DE->FR`, `SE-SE3->SE-SE4`, `GB->FR`.",
+        "operationId": "get_exchange_sources_v1_exchange__exchange_key__sources_get",
+        "parameters": [
+          {
+            "name": "exchange_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Exchange Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExchangeSourcesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/exchange/{exchange_key}/coverage": {
+      "get": {
+        "tags": [
+          "Physical flow pairs"
+        ],
+        "summary": "Get coverage for a physical-flow pair",
+        "description": "Discover data availability for a physical-flow pair as a plottable coverage grid.\n\nReturns bucketed point counts for every source configured for the pair.\nUse `GET /v1/exchanges/{exchange_key}` to see which sources are available.\n\nExample pair keys: `DE->FR`, `SE-SE3->SE-SE4`, `GB->FR`.",
+        "operationId": "get_exchange_coverage_v1_exchange__exchange_key__coverage_get",
+        "parameters": [
+          {
+            "name": "exchange_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Exchange Key"
+            }
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Bucket size: '1h', '1d', or '1w'.",
+              "default": "1d",
+              "title": "Resolution"
+            },
+            "description": "Bucket size: '1h', '1d', or '1w'."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of coverage window (ISO 8601). Default: 30 days ago.",
+              "title": "Start"
+            },
+            "description": "Start of coverage window (ISO 8601). Default: 30 days ago."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of coverage window (ISO 8601). Default: now.",
+              "title": "End"
+            },
+            "description": "End of coverage window (ISO 8601). Default: now."
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to a single source. If omitted, all configured sources are checked.",
+              "title": "Source"
+            },
+            "description": "Filter to a single source. If omitted, all configured sources are checked."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/zone/{zone_key}/production": {
+      "get": {
+        "tags": [
+          "Production"
+        ],
+        "summary": "Get Production",
+        "description": "Get electricity production breakdown by production type for a zone.\n\nReturns time series with generation per production type in MW. Each data point\nincludes all production types that have data for the zone — missing types are\nfilled with 0.\n\n**Production types**: `solar`, `wind`, `hydro`, `nuclear`, `coal`, `gas`, `oil`,\n`biomass`, `geothermal`, `unknown`.\n\n**Multi-source**: Use `?source=` to select a specific data source, or omit\nto use the zone's preferred source.\n\nFor Swedish bidding zones (SE-SE1 through SE-SE4), the `estimated` source\nprovides per-zone hydro production estimated from the energy balance\nresidual, since ENTSO-E only reports aggregated hydro at the national level.",
+        "operationId": "get_production_v1_zone__zone_key__production_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "zone_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Zone Key"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Data source to query (e.g., `entsoe`, `energy_charts`). If omitted, the zone's preferred source is used.",
+              "title": "Source"
+            },
+            "description": "Data source to query (e.g., `entsoe`, `energy_charts`). If omitted, the zone's preferred source is used."
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Resolution",
+              "description": "Output cadence. `native` (default) emits each mode at its upstream cadence with `null` where a mode has no data at a timestamp. `5M`/`15M`/`30M`/`1H` snap every mode to a uniform grid: mean-downsample if the target is coarser than the upstream cadence, ffill-upsample (carrying each value across one upstream interval) if finer.",
+              "default": "native"
+            },
+            "description": "Output cadence. `native` (default) emits each mode at its upstream cadence with `null` where a mode has no data at a timestamp. `5M`/`15M`/`30M`/`1H` snap every mode to a uniform grid: mean-downsample if the target is coarser than the upstream cadence, ffill-upsample (carrying each value across one upstream interval) if finer."
+          },
+          {
+            "name": "fuel",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated production modes to return (e.g. `solar,wind`). `all` (default) returns every mode that has data in the window.",
+              "default": "all",
+              "title": "Fuel"
+            },
+            "description": "Comma-separated production modes to return (e.g. `solar,wind`). `all` (default) returns every mode that has data in the window."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of time range (ISO 8601). Default: 24h ago.",
+              "title": "Start"
+            },
+            "description": "Start of time range (ISO 8601). Default: 24h ago."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of time range (ISO 8601). Default: now.",
+              "title": "End"
+            },
+            "description": "End of time range (ISO 8601). Default: now."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/statistics/installed-capacity/{zone_key}": {
+      "get": {
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Get installed generation capacity",
+        "description": "Get installed generation capacity for a zone.\n\nThe endpoint serves source-specific installed generation capacity in MW:\n\n* `source=entsoe` returns ENTSO-E Transparency Platform article 14.1.A\n  document type A68 at annual cadence (`P1Y`).\n* `source=ember` returns Ember monthly country-level installed wind and solar\n  capacity at monthly cadence (`P1M`) where Ember has coverage.\n\nUse the default `breakdown=fuel` for Rebase fuel rollups such as `wind`,\n`solar`, `hydro`, and `nuclear`. Use `breakdown=psr` with `source=entsoe`\nwhen you need raw ENTSO-E PSR columns, for example `B18` for wind offshore\nand `B19` for wind onshore. Ember does not expose ENTSO-E PSR columns and\nonly supports `breakdown=fuel`.\n\n`datetime` and `period_end` describe the upstream validity period.\nFor ENTSO-E these values should be interpreted as annual stock/reference\nvalues for that period, not as exact measurements taken at `period_end`.\nFor Ember they mark the monthly capacity period.\n\nExample requests:\n\n```bash\ncurl -H \"X-API-Key: $REBASE_GRID_API_KEY\" \\\n  \"https://grid.rebase.energy/api/v1/statistics/installed-capacity/SE?start=2015-01-01T00:00:00Z&end=2027-01-01T00:00:00Z\"\n\ncurl -H \"X-API-Key: $REBASE_GRID_API_KEY\" \\\n  \"https://grid.rebase.energy/api/v1/statistics/installed-capacity/SE?breakdown=psr&start=2015-01-01T00:00:00Z&end=2027-01-01T00:00:00Z\"\n\ncurl -H \"X-API-Key: $REBASE_GRID_API_KEY\" \\\n  \"https://grid.rebase.energy/api/v1/statistics/installed-capacity/DE?source=ember&start=2024-01-01T00:00:00Z&end=2024-04-01T00:00:00Z\"\n```",
+        "operationId": "get_installed_capacity_v1_statistics_installed_capacity__zone_key__get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "zone_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Zone Key"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Data source to query. Supported values: `entsoe`, `ember`.",
+              "title": "Source"
+            },
+            "description": "Data source to query. Supported values: `entsoe`, `ember`."
+          },
+          {
+            "name": "breakdown",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "fuel",
+                "psr"
+              ],
+              "type": "string",
+              "description": "`fuel` returns Rebase fuel rollups; `psr` returns raw ENTSO-E PSR columns such as `B18` and `B19` for `source=entsoe`.",
+              "default": "fuel",
+              "title": "Breakdown"
+            },
+            "description": "`fuel` returns Rebase fuel rollups; `psr` returns raw ENTSO-E PSR columns such as `B18` and `B19` for `source=entsoe`."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of time range (ISO 8601). Default: 2015-01-01. Installed-capacity periods that overlap the requested range are returned.",
+              "title": "Start"
+            },
+            "description": "Start of time range (ISO 8601). Default: 2015-01-01. Installed-capacity periods that overlap the requested range are returned."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of time range (ISO 8601). Default: now. Installed-capacity periods that overlap the requested range are returned.",
+              "title": "End"
+            },
+            "description": "End of time range (ISO 8601). Default: now. Installed-capacity periods that overlap the requested range are returned."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Installed generation capacity in MW.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstalledCapacityResponse"
+                },
+                "examples": {
+                  "fuel": {
+                    "summary": "ENTSO-E Sweden by Rebase fuel rollup",
+                    "value": {
+                      "zone_key": "SE",
+                      "source": "entsoe",
+                      "data_type": "installed_capacity",
+                      "resolution": "P1Y",
+                      "unit": "MW",
+                      "breakdown": "fuel",
+                      "semantics": "Annual installed generation capacity for the ENTSO-E period; not a guaranteed end-of-year timestamp.",
+                      "start": "2015-01-01T00:00:00+00:00",
+                      "end": "2027-01-01T00:00:00+00:00",
+                      "data": {
+                        "datetime": [
+                          "2014-12-31T23:00:00+00:00",
+                          "2024-12-31T23:00:00+00:00"
+                        ],
+                        "period_end": [
+                          "2015-12-31T23:00:00+00:00",
+                          "2025-12-31T23:00:00+00:00"
+                        ],
+                        "hydro": [
+                          16246,
+                          16305
+                        ],
+                        "nuclear": [
+                          9528,
+                          6900
+                        ],
+                        "solar": [
+                          79,
+                          5000
+                        ],
+                        "wind": [
+                          6096,
+                          18000
+                        ],
+                        "unknown": [
+                          1070,
+                          4096
+                        ]
+                      },
+                      "provenance": {
+                        "category": "REFERENCE",
+                        "kind": "CALCULATED",
+                        "description": "ENTSO-E A68 annual installed generation capacity (processType A33 Year ahead)"
+                      }
+                    }
+                  },
+                  "psr": {
+                    "summary": "ENTSO-E Sweden by raw PSR type",
+                    "value": {
+                      "zone_key": "SE",
+                      "source": "entsoe",
+                      "data_type": "installed_capacity",
+                      "resolution": "P1Y",
+                      "unit": "MW",
+                      "breakdown": "psr",
+                      "semantics": "Annual installed generation capacity for the ENTSO-E period; not a guaranteed end-of-year timestamp.",
+                      "start": "2015-01-01T00:00:00+00:00",
+                      "end": "2027-01-01T00:00:00+00:00",
+                      "data": {
+                        "datetime": [
+                          "2024-12-31T23:00:00+00:00"
+                        ],
+                        "period_end": [
+                          "2025-12-31T23:00:00+00:00"
+                        ],
+                        "B12": [
+                          16305
+                        ],
+                        "B14": [
+                          6900
+                        ],
+                        "B16": [
+                          5000
+                        ],
+                        "B19": [
+                          18000
+                        ],
+                        "B20": [
+                          4096
+                        ]
+                      },
+                      "provenance": {
+                        "category": "REFERENCE",
+                        "kind": "CALCULATED",
+                        "description": "ENTSO-E A68 annual installed generation capacity (processType A33 Year ahead)"
+                      }
+                    }
+                  },
+                  "ember": {
+                    "summary": "Ember Germany monthly wind and solar",
+                    "value": {
+                      "zone_key": "DE",
+                      "source": "ember",
+                      "data_type": "installed_capacity",
+                      "resolution": "P1M",
+                      "unit": "MW",
+                      "breakdown": "fuel",
+                      "semantics": "Monthly country-level installed wind and solar capacity from Ember.",
+                      "start": "2024-01-01T00:00:00+00:00",
+                      "end": "2024-04-01T00:00:00+00:00",
+                      "data": {
+                        "datetime": [
+                          "2024-01-01T00:00:00+00:00",
+                          "2024-02-01T00:00:00+00:00"
+                        ],
+                        "period_end": [
+                          "2024-02-01T00:00:00+00:00",
+                          "2024-03-01T00:00:00+00:00"
+                        ],
+                        "solar": [
+                          84900,
+                          86160
+                        ],
+                        "wind": [
+                          69610,
+                          69820
+                        ]
+                      },
+                      "provenance": {
+                        "category": "REFERENCE",
+                        "kind": "CALCULATED",
+                        "description": "Ember monthly country-level installed wind and solar capacity"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/statistics/electricity-generation/{zone_key}": {
+      "get": {
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Get electricity generation statistics",
+        "description": "Ember country-level electricity generation by source. Returns one value column and one share column per selected Ember series, for example `wind_twh` and `wind_share_pct`.",
+        "operationId": "get_electricity_generation_statistics_v1_statistics_electricity_generation__zone_key__get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "zone_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Zone Key"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Data source. Currently `ember`.",
+              "title": "Source"
+            },
+            "description": "Data source. Currently `ember`."
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "monthly",
+                "yearly"
+              ],
+              "type": "string",
+              "description": "Statistics cadence to return.",
+              "title": "Resolution"
+            },
+            "description": "Statistics cadence to return."
+          },
+          {
+            "name": "series",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional comma-separated Ember series slugs or names, for example `wind,solar` or `Wind and solar`.",
+              "title": "Series"
+            },
+            "description": "Optional comma-separated Ember series slugs or names, for example `wind,solar` or `Wind and solar`."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of time range (ISO 8601).",
+              "title": "Start"
+            },
+            "description": "Start of time range (ISO 8601)."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of time range (ISO 8601).",
+              "title": "End"
+            },
+            "description": "End of time range (ISO 8601)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatisticsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/statistics/electricity-demand/{zone_key}": {
+      "get": {
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Get electricity demand statistics",
+        "description": "Ember country-level electricity demand. Monthly responses return `demand_twh`; yearly responses may also include `demand_mwh_per_capita`.",
+        "operationId": "get_electricity_demand_statistics_v1_statistics_electricity_demand__zone_key__get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "zone_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Zone Key"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Data source. Currently `ember`.",
+              "title": "Source"
+            },
+            "description": "Data source. Currently `ember`."
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "monthly",
+                "yearly"
+              ],
+              "type": "string",
+              "description": "Statistics cadence to return.",
+              "title": "Resolution"
+            },
+            "description": "Statistics cadence to return."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of time range (ISO 8601).",
+              "title": "Start"
+            },
+            "description": "Start of time range (ISO 8601)."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of time range (ISO 8601).",
+              "title": "End"
+            },
+            "description": "End of time range (ISO 8601)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatisticsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/statistics/power-sector-emissions/{zone_key}": {
+      "get": {
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Get power-sector emissions statistics",
+        "description": "Ember country-level power-sector emissions by source. Returns one emissions column and one share column per selected Ember series, for example `coal_mtco2` and `coal_share_pct`.",
+        "operationId": "get_power_sector_emissions_statistics_v1_statistics_power_sector_emissions__zone_key__get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "zone_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Zone Key"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Data source. Currently `ember`.",
+              "title": "Source"
+            },
+            "description": "Data source. Currently `ember`."
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "monthly",
+                "yearly"
+              ],
+              "type": "string",
+              "description": "Statistics cadence to return.",
+              "title": "Resolution"
+            },
+            "description": "Statistics cadence to return."
+          },
+          {
+            "name": "series",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional comma-separated Ember series slugs or names, for example `coal,gas` or `Wind and solar`.",
+              "title": "Series"
+            },
+            "description": "Optional comma-separated Ember series slugs or names, for example `coal,gas` or `Wind and solar`."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of time range (ISO 8601).",
+              "title": "Start"
+            },
+            "description": "Start of time range (ISO 8601)."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of time range (ISO 8601).",
+              "title": "End"
+            },
+            "description": "End of time range (ISO 8601)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatisticsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/statistics/carbon-intensity/{zone_key}": {
+      "get": {
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Get carbon-intensity statistics",
+        "description": "Ember country-level power-sector carbon intensity.",
+        "operationId": "get_carbon_intensity_statistics_v1_statistics_carbon_intensity__zone_key__get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "zone_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Zone Key"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Data source. Currently `ember`.",
+              "title": "Source"
+            },
+            "description": "Data source. Currently `ember`."
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "monthly",
+                "yearly"
+              ],
+              "type": "string",
+              "description": "Statistics cadence to return.",
+              "title": "Resolution"
+            },
+            "description": "Statistics cadence to return."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of time range (ISO 8601).",
+              "title": "Start"
+            },
+            "description": "Start of time range (ISO 8601)."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of time range (ISO 8601).",
+              "title": "End"
+            },
+            "description": "End of time range (ISO 8601)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatisticsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/zone/{zone_key}/consumption": {
+      "get": {
+        "tags": [
+          "Consumption"
+        ],
+        "summary": "Get Consumption",
+        "description": "Get total system load (consumption) for a zone.\n\nReturns time series of total electricity consumption in MW.\n\n**Multi-source**: Use `?source=` to select a specific data source, or omit\nto use the area's preferred source. Use `GET /v1/areas/{area_id}` to see\navailable sources.\n\nThe virtual source `energy_balance` composes load from production, storage\ndischarge, and net exchange flows. Prefer it for zones with pumped\nstorage (DE, CH, AT, PT, ...) where the ENTSO-E raw A65 value\nover-reports.\n\n**Response fields**:\n- `load_mw`: Total system load in megawatts.\n- `source`: The data source used for this response.",
+        "operationId": "get_consumption_v1_zone__zone_key__consumption_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "zone_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Zone Key"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Data source to query. Options include real upstream sources (e.g. `entsoe`, `energy_charts`) plus the virtual source `energy_balance`, which computes load from ``production + storage_discharge − net_exports``. Omit to use the zone's preferred source.",
+              "title": "Source"
+            },
+            "description": "Data source to query. Options include real upstream sources (e.g. `entsoe`, `energy_charts`) plus the virtual source `energy_balance`, which computes load from ``production + storage_discharge − net_exports``. Omit to use the zone's preferred source."
+          },
+          {
+            "name": "variant",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Endpoint variant for sources that publish multiple semantically distinct series. Example: `?source=bmrs&variant=itsdo` returns Elexon's transmission-boundary demand (ITSDO); omitting the parameter selects the source's configured `default_variant` from `config/sources.yaml` (`b0610` for `bmrs` = A65). Sources without a variants block ignore this parameter.",
+              "title": "Variant"
+            },
+            "description": "Endpoint variant for sources that publish multiple semantically distinct series. Example: `?source=bmrs&variant=itsdo` returns Elexon's transmission-boundary demand (ITSDO); omitting the parameter selects the source's configured `default_variant` from `config/sources.yaml` (`b0610` for `bmrs` = A65). Sources without a variants block ignore this parameter."
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Resolution",
+              "description": "Output cadence. `native` (default) emits the series at its upstream cadence with `null` where data is missing. `5M`/`15M`/`30M`/`1H` resample onto the uniform grid: mean-downsample if the target is coarser, ffill-upsample (carrying each value across one upstream interval) if finer.",
+              "default": "native"
+            },
+            "description": "Output cadence. `native` (default) emits the series at its upstream cadence with `null` where data is missing. `5M`/`15M`/`30M`/`1H` resample onto the uniform grid: mean-downsample if the target is coarser, ffill-upsample (carrying each value across one upstream interval) if finer."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of time range (ISO 8601). Default: 24h ago.",
+              "title": "Start"
+            },
+            "description": "Start of time range (ISO 8601). Default: 24h ago."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of time range (ISO 8601). Default: now.",
+              "title": "End"
+            },
+            "description": "End of time range (ISO 8601). Default: now."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsumptionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/zone/{zone_key}/storage": {
+      "get": {
+        "tags": [
+          "Storage"
+        ],
+        "summary": "Get Storage",
+        "description": "Get storage generation (pumped hydro / battery discharge) for a zone.\n\nReturns time series with each storage mode in MW (positive = discharging\nto grid). Charging consumption is included in the load number, not here.\n\n**Storage modes**: `hydro`, `battery`.",
+        "operationId": "get_storage_v1_zone__zone_key__storage_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "zone_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Zone Key"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Data source to query (e.g., `entsoe`). If omitted, the zone's preferred production source is reused.",
+              "title": "Source"
+            },
+            "description": "Data source to query (e.g., `entsoe`). If omitted, the zone's preferred production source is reused."
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Resolution",
+              "description": "Output cadence. `native` (default) emits each mode at its upstream cadence. `5M`/`15M`/`30M`/`1H` resample onto the uniform grid: mean-downsample if coarser, ffill-upsample (one upstream interval) if finer.",
+              "default": "native"
+            },
+            "description": "Output cadence. `native` (default) emits each mode at its upstream cadence. `5M`/`15M`/`30M`/`1H` resample onto the uniform grid: mean-downsample if coarser, ffill-upsample (one upstream interval) if finer."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of time range (ISO 8601). Default: 24h ago.",
+              "title": "Start"
+            },
+            "description": "Start of time range (ISO 8601). Default: 24h ago."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of time range (ISO 8601). Default: now.",
+              "title": "End"
+            },
+            "description": "End of time range (ISO 8601). Default: now."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/exchange/flows/{key}": {
+      "get": {
+        "tags": [
+          "Physical flow"
+        ],
+        "summary": "Get measured physical flow",
+        "description": "Get measured physical electricity flows (ENTSO-E TR 12.1.G).\n\nReturns **measured physical flow** — not commercial or nominated schedules\n(TR 12.1.F). Covers both cross-border and inter-zonal pairs (e.g. IT-NO↔IT-CNO,\nIT-CAL↔IT-SIC). URL keeps the legacy `exchange` slug for backwards compatibility.\n\n`key` can be either a **zone key** or a **flow pair key**:\n\n- **Zone key** (e.g. `DE`): returns all pairs involving that zone\n  (`DE->FR`, `DE->NL`, `DE->AT`, …).\n- **Flow pair key** (e.g. `DE->FR`): returns data for that single\n  pair only. Use `GET /v1/exchanges` to list all valid pair keys.\n\n**Response fields**:\n- `net_flow`: Physical flow in MW. For zone queries, oriented to the\n  queried zone — positive means the queried zone is *exporting*.\n  For pair queries, oriented to the `zone_from` in the pair key —\n  positive means flow from `zone_from` to `zone_to`.",
+        "operationId": "get_exchange_v1_exchange_flows__key__get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Data source for physical flows.",
+              "title": "Source"
+            },
+            "description": "Data source for physical flows."
+          },
+          {
+            "name": "resolution",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Resolution",
+              "description": "Output cadence. `native` (default) emits each pair at its upstream cadence. `5M`/`15M`/`30M`/`1H` resample onto the uniform grid: mean-downsample if coarser, ffill-upsample (one upstream interval) if finer.",
+              "default": "native"
+            },
+            "description": "Output cadence. `native` (default) emits each pair at its upstream cadence. `5M`/`15M`/`30M`/`1H` resample onto the uniform grid: mean-downsample if coarser, ffill-upsample (one upstream interval) if finer."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of time range (ISO 8601). Default: 24h ago.",
+              "title": "Start"
+            },
+            "description": "Start of time range (ISO 8601). Default: 24h ago."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of time range (ISO 8601). Default: now.",
+              "title": "End"
+            },
+            "description": "End of time range (ISO 8601). Default: now."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExchangeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/exchange/capacity/{from_zone}/{to_zone}": {
+      "get": {
+        "tags": [
+          "Transfer capacity"
+        ],
+        "summary": "Get transfer capacity (NTC / MaxBex)",
+        "description": "Get cross-border transfer capacity (NTC / MaxBex) for a zone pair.\n\nReturns the **TSO-allocated commercial transfer capacity** — the maximum\nMW market participants can schedule. This is forward-looking and reflects\nreliability margins (TRM), N-1 security, and flow-based allocation; it is\ntypically a fraction of the physical line nameplate rating. **Not** the\nsame as PyPSA `s_nom` line capacity (also surfaced in the map UI), which\nis the engineering thermal nameplate.\n\n**Capacity is asymmetric**: the MW available from A→B is not the same\nas B→A. This endpoint returns both directions for the requested pair\nin a single response under ``series``:\n\n- ``direction = \"forward\"`` — capacity in the requested A→B direction.\n- ``direction = \"reverse\"`` — capacity in the opposite B→A direction.\n\nValues are always non-negative MW (direction is encoded in\n``direction``, not in the sign of the number).\n\n**Sources**:\n\n- ``entsoe`` (A61 NTC forecasts; default) — Net Transfer Capacity, covers\n  most non-flow-based borders.\n- ``jao`` (MaxBex) — Maximum Bilateral Exchange for flow-based regions\n  (CORE, Nordic, SWE, Italy-North, Cross-CCR) where A61 returns nothing.\n\nRequests with ``from_zone`` and ``to_zone`` swapped relative to the\ncanonical edge in ``exchanges.yaml`` are accepted — the response\nflips the forward/reverse mapping accordingly. ``canonical_edge`` in\nthe response always echoes the underlying catalog key so callers can\nre-key against their own state if needed.",
+        "operationId": "get_transfer_capacity_v1_exchange_capacity__from_zone___to_zone__get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from_zone",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "From Zone"
+            }
+          },
+          {
+            "name": "to_zone",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "To Zone"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Provider slug. One of: entsoe, jao. Defaults to 'entsoe'.",
+              "title": "Source"
+            },
+            "description": "Provider slug. One of: entsoe, jao. Defaults to 'entsoe'."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of time range (ISO 8601). Default: 24h ago.",
+              "title": "Start"
+            },
+            "description": "Start of time range (ISO 8601). Default: 24h ago."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of time range (ISO 8601). Default: now.",
+              "title": "End"
+            },
+            "description": "End of time range (ISO 8601). Default: now."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapacityResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/zone/{zone_key}/price": {
+      "get": {
+        "tags": [
+          "Prices"
+        ],
+        "summary": "Get Price",
+        "description": "Get day-ahead spot market electricity price for a zone.\n\nReturns hourly day-ahead price data. Currency is EUR for European zones\nand USD for US zones.\n\n**Multi-source**: Use `?source=` to select a specific data source, or omit\nto use the zone's preferred source.\n\n**Response fields**:\n- `price`: Day-ahead price value.\n- `currency`: `EUR` or `USD`.",
+        "operationId": "get_price_v1_zone__zone_key__price_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "zone_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Zone Key"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Data source to query (e.g., `entsoe`, `energy_charts`). If omitted, the zone's preferred source is used.",
+              "title": "Source"
+            },
+            "description": "Data source to query (e.g., `entsoe`, `energy_charts`). If omitted, the zone's preferred source is used."
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start of time range (ISO 8601). Default: 24h ago.",
+              "title": "Start"
+            },
+            "description": "Start of time range (ISO 8601). Default: 24h ago."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "End of time range (ISO 8601). Default: now.",
+              "title": "End"
+            },
+            "description": "End of time range (ISO 8601). Default: now."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/frequency/live": {
+      "get": {
+        "tags": [
+          "Frequency"
+        ],
+        "summary": "Get Frequency Live",
+        "description": "Live CESA frequency — last 60 s of 1-Hz median samples.",
+        "operationId": "get_frequency_live_v1_frequency_live_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrequencyLiveResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyQuery": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AreaCoverageResponse": {
+        "properties": {
+          "area_id": {
+            "type": "string",
+            "title": "Area Id"
+          },
+          "resolution": {
+            "type": "string",
+            "title": "Resolution",
+            "description": "Bucket size used: '1h', '1d', or '1w'"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "Start of coverage window (ISO 8601)"
+          },
+          "end": {
+            "type": "string",
+            "title": "End",
+            "description": "End of coverage window (ISO 8601)"
+          },
+          "buckets": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Buckets",
+            "description": "Shared time axis — bucket start timestamps (ISO 8601)."
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageSeriesEntry"
+            },
+            "type": "array",
+            "title": "Series",
+            "description": "Per-series point counts found in the database for this area."
+          }
+        },
+        "type": "object",
+        "required": [
+          "area_id",
+          "resolution",
+          "start",
+          "end",
+          "buckets",
+          "series"
+        ],
+        "title": "AreaCoverageResponse"
+      },
+      "AreaListResponse": {
+        "properties": {
+          "areas": {
+            "items": {
+              "$ref": "#/components/schemas/AreaSummary"
+            },
+            "type": "array",
+            "title": "Areas"
+          }
+        },
+        "type": "object",
+        "required": [
+          "areas"
+        ],
+        "title": "AreaListResponse"
+      },
+      "AreaResponse": {
+        "properties": {
+          "area_id": {
+            "type": "string",
+            "title": "Area Id",
+            "description": "Canonical area identifier. Country areas use ISO 3166-1 alpha-2 codes (e.g. DE); bidding/control areas keep the existing zone keys (e.g. DK-DK1, US-NY-NYIS)."
+          },
+          "area_type": {
+            "type": "string",
+            "enum": [
+              "country",
+              "bidding_zone",
+              "control_area",
+              "synchronous_area",
+              "market_coupling_area"
+            ],
+            "title": "Area Type",
+            "description": "Semantic area type."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Human-readable area name."
+          },
+          "country_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country Code",
+            "description": "ISO 3166-1 alpha-2 country code when the area belongs to one country."
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone",
+            "description": "IANA timezone identifier for zone-derived areas."
+          },
+          "codes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Codes",
+            "description": "Additional stable identifiers. Country areas may include iso_alpha3; ENTSO-E areas may include entsoe_eic and entsoe_capacity_eic."
+          },
+          "relationships": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Relationships",
+            "description": "Area relationships such as country, synchronous_area, market_coupling_area, or contains."
+          },
+          "sources": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Sources",
+            "description": "Available data sources and their data types for zone-derived areas."
+          },
+          "default_source": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Source",
+            "description": "Preferred source per data type, used when ?source= is omitted."
+          },
+          "source_datatypes": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Datatypes",
+            "description": "Per data type/source collection semantics, when annotated."
+          }
+        },
+        "type": "object",
+        "required": [
+          "area_id",
+          "area_type",
+          "name"
+        ],
+        "title": "AreaResponse"
+      },
+      "AreaSourcesResponse": {
+        "properties": {
+          "area_id": {
+            "type": "string",
+            "title": "Area Id",
+            "description": "Area the response is scoped to."
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/ZoneSourceEntry"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "One entry per (source, variable) reachable for a zone-derived area. Generated aggregate areas return an empty list."
+          }
+        },
+        "type": "object",
+        "required": [
+          "area_id",
+          "sources"
+        ],
+        "title": "AreaSourcesResponse"
+      },
+      "AreaSummary": {
+        "properties": {
+          "area_id": {
+            "type": "string",
+            "title": "Area Id",
+            "description": "Canonical area identifier. Country areas use ISO 3166-1 alpha-2 codes (e.g. DE); bidding/control areas keep the existing zone keys (e.g. DK-DK1, US-NY-NYIS)."
+          },
+          "area_type": {
+            "type": "string",
+            "enum": [
+              "country",
+              "bidding_zone",
+              "control_area",
+              "synchronous_area",
+              "market_coupling_area"
+            ],
+            "title": "Area Type",
+            "description": "Semantic area type."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Human-readable area name."
+          },
+          "country_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country Code",
+            "description": "ISO 3166-1 alpha-2 country code when the area belongs to one country."
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone",
+            "description": "IANA timezone identifier for zone-derived areas."
+          },
+          "codes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Codes",
+            "description": "Additional stable identifiers. Country areas may include iso_alpha3; ENTSO-E areas may include entsoe_eic and entsoe_capacity_eic."
+          },
+          "relationships": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Relationships",
+            "description": "Area relationships such as country, synchronous_area, market_coupling_area, or contains."
+          },
+          "sources": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Sources",
+            "description": "Available data sources and their data types for zone-derived areas."
+          },
+          "default_source": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Source",
+            "description": "Preferred source per data type, used when ?source= is omitted."
+          },
+          "source_datatypes": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Datatypes",
+            "description": "Per data type/source collection semantics, when annotated."
+          }
+        },
+        "type": "object",
+        "required": [
+          "area_id",
+          "area_type",
+          "name"
+        ],
+        "title": "AreaSummary"
+      },
+      "Asset": {
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id",
+            "description": "Stable API asset id."
+          },
+          "asset_type": {
+            "type": "string",
+            "title": "Asset Type",
+            "description": "Asset type, e.g. power_plant."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Human-readable asset name."
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Source dataset slug, e.g. gem."
+          },
+          "geometry": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Geometry",
+            "description": "GeoJSON geometry. Power plants use Point; line assets can use LineString."
+          },
+          "areas": {
+            "items": {
+              "$ref": "#/components/schemas/AssetAreaLink"
+            },
+            "type": "array",
+            "title": "Areas",
+            "description": "Areas this asset is linked to."
+          },
+          "properties": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Properties",
+            "description": "Asset-class-specific properties such as capacity_mw and fuel_type."
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset_id",
+          "asset_type",
+          "name",
+          "source",
+          "geometry"
+        ],
+        "title": "Asset"
+      },
+      "AssetAreaLink": {
+        "properties": {
+          "area_id": {
+            "type": "string",
+            "title": "Area Id",
+            "description": "Area id linked to the asset."
+          },
+          "relationship": {
+            "type": "string",
+            "title": "Relationship",
+            "description": "Relationship between the asset and area, e.g. located_in."
+          }
+        },
+        "type": "object",
+        "required": [
+          "area_id",
+          "relationship"
+        ],
+        "title": "AssetAreaLink"
+      },
+      "AssetListResponse": {
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/Asset"
+            },
+            "type": "array",
+            "title": "Assets"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total number of matching assets before pagination."
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assets",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "AssetListResponse"
+      },
+      "AssetResponse": {
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id",
+            "description": "Stable API asset id."
+          },
+          "asset_type": {
+            "type": "string",
+            "title": "Asset Type",
+            "description": "Asset type, e.g. power_plant."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Human-readable asset name."
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Source dataset slug, e.g. gem."
+          },
+          "geometry": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Geometry",
+            "description": "GeoJSON geometry. Power plants use Point; line assets can use LineString."
+          },
+          "areas": {
+            "items": {
+              "$ref": "#/components/schemas/AssetAreaLink"
+            },
+            "type": "array",
+            "title": "Areas",
+            "description": "Areas this asset is linked to."
+          },
+          "properties": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Properties",
+            "description": "Asset-class-specific properties such as capacity_mw and fuel_type."
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset_id",
+          "asset_type",
+          "name",
+          "source",
+          "geometry"
+        ],
+        "title": "AssetResponse"
+      },
+      "CapacityResponse": {
+        "properties": {
+          "from_zone": {
+            "type": "string",
+            "title": "From Zone",
+            "description": "Origin zone (e.g. FR)"
+          },
+          "to_zone": {
+            "type": "string",
+            "title": "To Zone",
+            "description": "Destination zone (e.g. BE)"
+          },
+          "canonical_edge": {
+            "type": "string",
+            "title": "Canonical Edge",
+            "description": "The canonical edge in the catalog ('A->B'); the request's from/to may match canonical direction (forward) or be reversed."
+          },
+          "data_type": {
+            "type": "string",
+            "title": "Data Type",
+            "default": "transfer_capacity"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "Start of time range (ISO 8601)"
+          },
+          "end": {
+            "type": "string",
+            "title": "End",
+            "description": "End of time range (ISO 8601)"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/CapacitySeries"
+            },
+            "type": "array",
+            "title": "Series",
+            "description": "One entry per (direction, source) combination that has data."
+          }
+        },
+        "type": "object",
+        "required": [
+          "from_zone",
+          "to_zone",
+          "canonical_edge",
+          "start",
+          "end",
+          "series"
+        ],
+        "title": "CapacityResponse"
+      },
+      "CapacitySeries": {
+        "properties": {
+          "direction": {
+            "type": "string",
+            "title": "Direction",
+            "description": "'forward' = the queried direction (from→to); 'reverse' = the opposite (to→from). Both directions are independent physical numbers (capacity is asymmetric)."
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Provider slug: entsoe | jao | energinet | fingrid | elering"
+          },
+          "data": {
+            "$ref": "#/components/schemas/CapacitySeriesData"
+          }
+        },
+        "type": "object",
+        "required": [
+          "direction",
+          "source",
+          "data"
+        ],
+        "title": "CapacitySeries"
+      },
+      "CapacitySeriesData": {
+        "properties": {
+          "datetime": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Datetime",
+            "description": "ISO 8601 timestamps, ascending"
+          },
+          "mw": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Mw",
+            "description": "Forecast transfer capacity in MW per timestamp. Always non-negative — direction is encoded in ``direction``."
+          }
+        },
+        "type": "object",
+        "required": [
+          "datetime",
+          "mw"
+        ],
+        "title": "CapacitySeriesData"
+      },
+      "ConsumptionColumnData": {
+        "properties": {
+          "datetime": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Datetime",
+            "description": "ISO 8601 timestamps, ascending"
+          },
+          "load_mw": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Load Mw",
+            "description": "Total system load in MW per timestamp. `null` when the upstream cadence does not align with the requested resolution grid (downsampled windows with no underlying data, or upsampled gaps beyond the carry-forward limit of one upstream interval)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "datetime",
+          "load_mw"
+        ],
+        "title": "ConsumptionColumnData"
+      },
+      "ConsumptionResponse": {
+        "properties": {
+          "zone_key": {
+            "type": "string",
+            "title": "Zone Key"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Data source used for this response"
+          },
+          "variant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant",
+            "description": "Endpoint variant within the source, when the source publishes multiple semantically distinct series (declared in ``config/sources.yaml`` under ``variables.consumption.variants``). Null for sources without variants. Example: ``bmrs`` ships ``b0610`` (default, A65) and ``itsdo``."
+          },
+          "data_type": {
+            "type": "string",
+            "title": "Data Type",
+            "default": "consumption"
+          },
+          "resolution": {
+            "type": "string",
+            "title": "Resolution",
+            "description": "Output cadence. `native` returns the upstream cadence with `null` gaps preserved. `5M`/`15M`/`30M`/`1H` resample onto a uniform grid (mean-downsample if coarser, ffill-upsample carrying one upstream interval if finer).",
+            "default": "native"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "Start of time range (ISO 8601)"
+          },
+          "end": {
+            "type": "string",
+            "title": "End",
+            "description": "End of time range (ISO 8601)"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ConsumptionColumnData"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance",
+            "description": "timedatamodel DataType taxonomy annotation. For the virtual ``derived`` source this is populated as DERIVED with a formula in ``derivation`` and the underlying sources listed in ``upstream_sources``."
+          }
+        },
+        "type": "object",
+        "required": [
+          "zone_key",
+          "source",
+          "start",
+          "end",
+          "data",
+          "provenance"
+        ],
+        "title": "ConsumptionResponse"
+      },
+      "CoverageResponse": {
+        "properties": {
+          "zone_key": {
+            "type": "string",
+            "title": "Zone Key"
+          },
+          "resolution": {
+            "type": "string",
+            "title": "Resolution",
+            "description": "Bucket size used: '1h', '1d', or '1w'"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "Start of coverage window (ISO 8601)"
+          },
+          "end": {
+            "type": "string",
+            "title": "End",
+            "description": "End of coverage window (ISO 8601)"
+          },
+          "buckets": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Buckets",
+            "description": "Shared time axis — bucket start timestamps (ISO 8601). Every entry in 'series' has a 'counts' array of the same length, aligned to these buckets."
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageSeriesEntry"
+            },
+            "type": "array",
+            "title": "Series",
+            "description": "Per-series point counts. One entry per time series found in the database for this zone."
+          }
+        },
+        "type": "object",
+        "required": [
+          "zone_key",
+          "resolution",
+          "start",
+          "end",
+          "buckets",
+          "series"
+        ],
+        "title": "CoverageResponse"
+      },
+      "CoverageSeriesEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Series identifier (e.g. 'production/solar/entsoe', 'exchange/DE->FR/entsoe')"
+          },
+          "data_type": {
+            "type": "string",
+            "title": "Data Type",
+            "description": "Data type: production, consumption, price, frequency, exchange, storage"
+          },
+          "sub_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sub Type",
+            "description": "Sub-type: production/storage mode name, exchange pair (e.g. 'DE->FR'), 'day_ahead' for price, or null"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Data source name"
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance",
+            "description": "Data provenance annotation for this source: 'measured' (direct TSO/ISO measurement), 'energy_balance' (derived from energy balance identity), 'estimated', 'modeled', or null if the source is not yet annotated."
+          },
+          "counts": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Counts",
+            "description": "Point count per bucket, aligned with the top-level 'buckets' array. 0 means no data in that bucket."
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "data_type",
+          "source",
+          "counts"
+        ],
+        "title": "CoverageSeriesEntry"
+      },
+      "ExchangeListResponse": {
+        "properties": {
+          "exchanges": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exchanges",
+            "description": "All configured physical flow pair keys in `<zone_from>-><zone_to>` format, sorted alphabetically. JSON key kept as `exchanges` for backwards compatibility."
+          }
+        },
+        "type": "object",
+        "required": [
+          "exchanges"
+        ],
+        "title": "ExchangeListResponse"
+      },
+      "ExchangePairColumnData": {
+        "properties": {
+          "datetime": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Datetime",
+            "description": "ISO 8601 timestamps, ascending"
+          },
+          "net_flow": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Net Flow",
+            "description": "Net physical flow in MW per timestamp, expressed from the queried zone's perspective: positive = export FROM the queried zone TO the counterpart in the pair key. `null` for resampled gaps."
+          }
+        },
+        "type": "object",
+        "required": [
+          "datetime",
+          "net_flow"
+        ],
+        "title": "ExchangePairColumnData"
+      },
+      "ExchangePairData": {
+        "properties": {
+          "zone_key": {
+            "type": "string",
+            "title": "Zone Key",
+            "description": "Physical flow pair in '<queried>-><counterpart>' format. The queried zone is always first; net_flow uses that orientation."
+          },
+          "data": {
+            "$ref": "#/components/schemas/ExchangePairColumnData"
+          }
+        },
+        "type": "object",
+        "required": [
+          "zone_key",
+          "data"
+        ],
+        "title": "ExchangePairData"
+      },
+      "ExchangeResponse": {
+        "properties": {
+          "zone_key": {
+            "type": "string",
+            "title": "Zone Key",
+            "description": "Queried zone"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Data source used for this response"
+          },
+          "data_type": {
+            "type": "string",
+            "title": "Data Type",
+            "default": "exchange"
+          },
+          "resolution": {
+            "type": "string",
+            "title": "Resolution",
+            "description": "Output cadence. `native` returns the upstream cadence. `5M`/`15M`/`30M`/`1H` resample onto a uniform grid (mean-downsample if coarser, ffill-upsample carrying one upstream interval if finer).",
+            "default": "native"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "Start of time range (ISO 8601)"
+          },
+          "end": {
+            "type": "string",
+            "title": "End",
+            "description": "End of time range (ISO 8601)"
+          },
+          "exchanges": {
+            "items": {
+              "$ref": "#/components/schemas/ExchangePairData"
+            },
+            "type": "array",
+            "title": "Exchanges"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance",
+            "description": "timedatamodel DataType taxonomy annotation for every physical flow pair in ``exchanges``. All pairs in one response come from the same source, so a single classification covers them."
+          }
+        },
+        "type": "object",
+        "required": [
+          "zone_key",
+          "source",
+          "start",
+          "end",
+          "exchanges",
+          "provenance"
+        ],
+        "title": "ExchangeResponse"
+      },
+      "ExchangeSourceEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Source name (e.g. `entsoe`, `bmrs`)."
+          },
+          "default": {
+            "type": "boolean",
+            "title": "Default",
+            "description": "Whether this is the primary source used when no `?source=` is specified."
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "default"
+        ],
+        "title": "ExchangeSourceEntry"
+      },
+      "ExchangeSourcesResponse": {
+        "properties": {
+          "exchange_key": {
+            "type": "string",
+            "title": "Exchange Key",
+            "description": "Physical flow pair key in `<zone_from>-><zone_to>` format."
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/ExchangeSourceEntry"
+            },
+            "type": "array",
+            "title": "Sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "exchange_key",
+          "sources"
+        ],
+        "title": "ExchangeSourcesResponse"
+      },
+      "ExchangeSummary": {
+        "properties": {
+          "exchange_key": {
+            "type": "string",
+            "title": "Exchange Key",
+            "description": "Physical flow pair key in `<zone_from>-><zone_to>` format."
+          },
+          "zone_from": {
+            "type": "string",
+            "title": "Zone From",
+            "description": "Origin zone key."
+          },
+          "zone_to": {
+            "type": "string",
+            "title": "Zone To",
+            "description": "Destination zone key."
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "Configured data sources for this pair, in priority order. The first is the default."
+          }
+        },
+        "type": "object",
+        "required": [
+          "exchange_key",
+          "zone_from",
+          "zone_to",
+          "sources"
+        ],
+        "title": "ExchangeSummary"
+      },
+      "FrequencyLiveResponse": {
+        "properties": {
+          "area": {
+            "type": "string",
+            "title": "Area",
+            "description": "Synchronous area code. Always CESA in this iteration.",
+            "default": "CESA"
+          },
+          "fetched_at": {
+            "type": "string",
+            "title": "Fetched At",
+            "description": "ISO 8601 UTC timestamp of when the cache was last refreshed from the live frequency feed"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/FrequencyLiveSample"
+            },
+            "type": "array",
+            "title": "Samples",
+            "description": "Last 60 seconds of 1-Hz median frequency samples, sorted ascending by t"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fetched_at",
+          "samples"
+        ],
+        "title": "FrequencyLiveResponse"
+      },
+      "FrequencyLiveSample": {
+        "properties": {
+          "t": {
+            "type": "string",
+            "title": "T",
+            "description": "ISO 8601 timestamp of the sample, UTC"
+          },
+          "hz": {
+            "type": "number",
+            "title": "Hz",
+            "description": "Grid frequency in Hz at this timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "t",
+          "hz"
+        ],
+        "title": "FrequencyLiveSample"
+      },
+      "GeoDatasetListResponse": {
+        "properties": {
+          "datasets": {
+            "items": {
+              "$ref": "#/components/schemas/GeoDatasetSummary"
+            },
+            "type": "array",
+            "title": "Datasets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "datasets"
+        ],
+        "title": "GeoDatasetListResponse"
+      },
+      "GeoDatasetManifest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "description": "ISO 8601 timestamp of the build"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "feature_count": {
+            "type": "integer",
+            "title": "Feature Count"
+          },
+          "feature_id_field": {
+            "type": "string",
+            "title": "Feature Id Field"
+          },
+          "crs": {
+            "type": "string",
+            "title": "Crs"
+          },
+          "license": {
+            "type": "string",
+            "title": "License"
+          },
+          "builder": {
+            "type": "string",
+            "title": "Builder",
+            "description": "Fully qualified builder class"
+          },
+          "sources": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "Upstream sources as recorded at build time"
+          },
+          "per_feature": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Per Feature",
+            "description": "Per-feature provenance: {feature_id: {source, reason, ...}}"
+          },
+          "notes": {
+            "type": "string",
+            "title": "Notes",
+            "description": "Free-form build notes",
+            "default": ""
+          },
+          "available_versions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Available Versions",
+            "description": "All registered versions of this dataset"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "version",
+          "created_at",
+          "sha256",
+          "feature_count",
+          "feature_id_field",
+          "crs",
+          "license",
+          "builder",
+          "sources",
+          "available_versions"
+        ],
+        "title": "GeoDatasetManifest",
+        "description": "Full dataset manifest. Permissive so new manifest fields pass through."
+      },
+      "GeoDatasetSummary": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Dataset name, e.g. 'world_zones' or 'entsoe_bzn'"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "description": "Dataset kind: 'zone', 'country', 'bidding_zone', 'control_area', 'synchronous_area', 'tso_area', ..."
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "Short human-readable description",
+            "default": ""
+          },
+          "latest_version": {
+            "type": "string",
+            "title": "Latest Version",
+            "description": "Current default version (ISO date)"
+          },
+          "versions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Versions",
+            "description": "All registered versions of this dataset"
+          },
+          "feature_count": {
+            "type": "integer",
+            "title": "Feature Count",
+            "description": "Number of features in the latest version"
+          },
+          "feature_id_field": {
+            "type": "string",
+            "title": "Feature Id Field",
+            "description": "Property name used as the feature identifier (e.g. 'zoneName' or 'eic_code')"
+          },
+          "crs": {
+            "type": "string",
+            "title": "Crs",
+            "description": "Coordinate reference system"
+          },
+          "license": {
+            "type": "string",
+            "title": "License",
+            "description": "Dataset license"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256",
+            "description": "SHA256 of the underlying features.geojson file"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/GeoSourceSummary"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "Upstream sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "latest_version",
+          "versions",
+          "feature_count",
+          "feature_id_field",
+          "crs",
+          "license",
+          "sha256",
+          "sources"
+        ],
+        "title": "GeoDatasetSummary",
+        "description": "Registry-level summary of one geo dataset. Omits per-feature provenance."
+      },
+      "GeoSourceSummary": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Human-readable source name"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref",
+            "description": "Upstream ref (git SHA, tag, date, ...)"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date",
+            "description": "Source date, if applicable"
+          },
+          "license": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License",
+            "description": "License of the source data"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url",
+            "description": "Canonical URL, when one exists"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "GeoSourceSummary",
+        "description": "One upstream source a geo dataset was built from."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "InstalledCapacityColumnData": {
+        "properties": {
+          "datetime": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Datetime",
+            "description": "Installed-capacity period-start timestamps, ascending. These mark the validity period, not an instant measurement."
+          },
+          "period_end": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Period End",
+            "description": "Installed-capacity period-end timestamps. Values represent source-specific stock/reference capacity for the period."
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "datetime",
+          "period_end"
+        ],
+        "title": "InstalledCapacityColumnData",
+        "description": "Column-form installed generation capacity in MW."
+      },
+      "InstalledCapacityResponse": {
+        "properties": {
+          "zone_key": {
+            "type": "string",
+            "title": "Zone Key"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Data source used for this response"
+          },
+          "data_type": {
+            "type": "string",
+            "title": "Data Type",
+            "default": "installed_capacity"
+          },
+          "resolution": {
+            "type": "string",
+            "title": "Resolution",
+            "description": "Upstream cadence, for example `P1Y` for ENTSO-E or `P1M` for Ember.",
+            "default": "P1Y"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit",
+            "default": "MW"
+          },
+          "breakdown": {
+            "type": "string",
+            "enum": [
+              "fuel",
+              "psr"
+            ],
+            "title": "Breakdown",
+            "description": "`fuel` returns Rebase fuel rollups; `psr` returns raw ENTSO-E PSR columns where the source supports them."
+          },
+          "semantics": {
+            "type": "string",
+            "title": "Semantics",
+            "default": "Annual installed generation capacity for the ENTSO-E period; not a guaranteed end-of-year timestamp."
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "Start of time range (ISO 8601)"
+          },
+          "end": {
+            "type": "string",
+            "title": "End",
+            "description": "End of time range (ISO 8601)"
+          },
+          "data": {
+            "$ref": "#/components/schemas/InstalledCapacityColumnData"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance",
+            "description": "timedatamodel DataType taxonomy annotation for the values in ``data``."
+          }
+        },
+        "type": "object",
+        "required": [
+          "zone_key",
+          "source",
+          "breakdown",
+          "start",
+          "end",
+          "data",
+          "provenance"
+        ],
+        "title": "InstalledCapacityResponse"
+      },
+      "PriceColumnData": {
+        "properties": {
+          "datetime": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Datetime",
+            "description": "ISO 8601 timestamps, ascending"
+          },
+          "price": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Price",
+            "description": "Day-ahead price per timestamp. See the top-level ``currency`` field for the unit."
+          }
+        },
+        "type": "object",
+        "required": [
+          "datetime",
+          "price"
+        ],
+        "title": "PriceColumnData"
+      },
+      "PriceResponse": {
+        "properties": {
+          "zone_key": {
+            "type": "string",
+            "title": "Zone Key"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Data source used for this response"
+          },
+          "data_type": {
+            "type": "string",
+            "title": "Data Type",
+            "default": "price"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "description": "Currency of every value in ``data.price`` (EUR or USD)."
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "Start of time range (ISO 8601)"
+          },
+          "end": {
+            "type": "string",
+            "title": "End",
+            "description": "End of time range (ISO 8601)"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PriceColumnData"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance",
+            "description": "timedatamodel DataType taxonomy annotation for the values in ``data``."
+          }
+        },
+        "type": "object",
+        "required": [
+          "zone_key",
+          "source",
+          "currency",
+          "start",
+          "end",
+          "data",
+          "provenance"
+        ],
+        "title": "PriceResponse"
+      },
+      "ProductionColumnData": {
+        "properties": {
+          "datetime": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Datetime",
+            "description": "ISO 8601 timestamps, ascending"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "datetime"
+        ],
+        "title": "ProductionColumnData",
+        "description": "Column-form production data in MW.\n\n``datetime`` is always present; additional fields are per-mode\narrays (``solar``, ``wind``, ``hydro``, ``nuclear``, ``coal``,\n``gas``, ``oil``, ``biomass``, ``geothermal``, ``unknown``). Only\nmodes with at least one non-null observation in the window appear\nas columns. Within a column, timestamps where the mode had no\nreported value carry ``null`` — when ``resolution=native`` (the\ndefault) values are *never* forward-filled across modes that\npublish at different cadences; the response shows the raw publish\ngrid honestly. When the caller passes ``resolution=15M`` (or any\nexplicit grid), each mode is mean-downsampled or ffill-upsampled\nonto that grid before the column is emitted (carry-forward is\ncapped at one upstream publication interval).\nAll columns are the same length as ``datetime``."
+      },
+      "ProductionResponse": {
+        "properties": {
+          "zone_key": {
+            "type": "string",
+            "title": "Zone Key"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Data source used for this response"
+          },
+          "data_type": {
+            "type": "string",
+            "title": "Data Type",
+            "default": "production"
+          },
+          "resolution": {
+            "type": "string",
+            "title": "Resolution",
+            "description": "Output cadence applied to the response — `native` means each mode is at its upstream cadence; any other value (`5M`, `15M`, `30M`, `1H`) means every mode has been resampled onto that uniform grid."
+          },
+          "native_resolution": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Native Resolution",
+            "description": "Per-mode upstream cadence as an ISO-8601 duration (e.g. `PT60M`, `PT15M`). `null` when the cadence couldn't be inferred from the window (typically: too few samples). Useful for comparing modes published at different rates within the same zone."
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "Start of time range (ISO 8601)"
+          },
+          "end": {
+            "type": "string",
+            "title": "End",
+            "description": "End of time range (ISO 8601)"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ProductionColumnData"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance",
+            "description": "timedatamodel DataType taxonomy annotation for the values in ``data``. See the ``Provenance`` model for the field semantics."
+          }
+        },
+        "type": "object",
+        "required": [
+          "zone_key",
+          "source",
+          "resolution",
+          "start",
+          "end",
+          "data",
+          "provenance"
+        ],
+        "title": "ProductionResponse"
+      },
+      "Provenance": {
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/ProvenanceCategory",
+            "description": "Leaf of the timedatamodel DataType taxonomy. See https://timedatamodel.readthedocs.io/en/latest/overview.html."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "ACTUAL",
+              "CALCULATED"
+            ],
+            "title": "Kind",
+            "description": "Tier-1 convenience label. Populated automatically from ``category`` when omitted."
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "One-line human-readable explanation of how this data was produced (upstream document type, model method, etc.)."
+          },
+          "issue_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue Time",
+            "description": "For FORECAST/PREDICTION categories only: when the forecast was issued. Omitted for every other category."
+          },
+          "derivation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derivation",
+            "description": "For DERIVED and RECONSTRUCTION categories: a short formula or rule string, e.g. ``production + storage_discharge − net_exports``."
+          },
+          "upstream_sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upstream Sources",
+            "description": "For DERIVED and RECONSTRUCTION categories: list of source short names whose observations this value was composed from."
+          }
+        },
+        "type": "object",
+        "required": [
+          "category"
+        ],
+        "title": "Provenance",
+        "description": "Annotation describing what kind of data a response carries.\n\n``category`` is the leaf from the spec. ``kind`` is derived from\n``category`` via :data:`KIND_BY_CATEGORY` — if a caller sets only\n``category``, the validator fills in ``kind``; if both are set, they\nmust agree (otherwise we silently let the caller lie about whether\ntheir data is ACTUAL or CALCULATED).\n\nThe remaining fields are optional evidence that's only meaningful\nfor some categories:\n\n* ``description`` — one-line human-readable explanation of how the\n  data was produced (e.g. upstream document type, model method).\n* ``issue_time`` — for FORECAST/PREDICTION only. Omitted elsewhere.\n* ``derivation`` + ``upstream_sources`` — for DERIVED and\n  RECONSTRUCTION, a formula string plus the list of upstream source\n  short names whose observations fed the computation."
+      },
+      "ProvenanceCategory": {
+        "type": "string",
+        "enum": [
+          "OBSERVATION",
+          "DERIVED",
+          "ESTIMATION",
+          "FORECAST",
+          "PREDICTION",
+          "SCENARIO",
+          "SIMULATION",
+          "RECONSTRUCTION",
+          "REFERENCE",
+          "BASELINE",
+          "BENCHMARK",
+          "IDEAL"
+        ],
+        "title": "ProvenanceCategory",
+        "description": "Leaf of the timedatamodel DataType taxonomy (spec casing preserved)."
+      },
+      "Resolution": {
+        "type": "string",
+        "enum": [
+          "native",
+          "5M",
+          "15M",
+          "30M",
+          "1H"
+        ],
+        "title": "Resolution",
+        "description": "Output cadence the caller asked for on a series endpoint.\n\n``NATIVE`` means: leave the series at its upstream cadence and leave\nholes as ``null`` where data is missing. The other members snap the\nseries onto a uniform grid: ``5M``, ``15M``, ``30M``, ``1H``."
+      },
+      "StatisticsColumnData": {
+        "properties": {
+          "datetime": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Datetime",
+            "description": "Period-start timestamps, ascending. These mark the validity period."
+          },
+          "period_end": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Period End",
+            "description": "Period-end timestamps for each aggregate/reference value."
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "datetime",
+          "period_end"
+        ],
+        "title": "StatisticsColumnData",
+        "description": "Column-form period aggregate/reference statistics."
+      },
+      "StatisticsResponse": {
+        "properties": {
+          "zone_key": {
+            "type": "string",
+            "title": "Zone Key"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Data source used for this response"
+          },
+          "data_type": {
+            "type": "string",
+            "title": "Data Type",
+            "description": "Statistics dataset key, for example ``electricity_generation``."
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "P1M",
+              "P1Y"
+            ],
+            "title": "Resolution",
+            "description": "Upstream period cadence returned by this response."
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "Start of time range (ISO 8601)"
+          },
+          "end": {
+            "type": "string",
+            "title": "End",
+            "description": "End of time range (ISO 8601)"
+          },
+          "units": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Units",
+            "description": "Unit per emitted data column, excluding ``datetime`` and ``period_end``."
+          },
+          "data": {
+            "$ref": "#/components/schemas/StatisticsColumnData"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance",
+            "description": "timedatamodel DataType taxonomy annotation for the values in ``data``."
+          }
+        },
+        "type": "object",
+        "required": [
+          "zone_key",
+          "source",
+          "data_type",
+          "resolution",
+          "start",
+          "end",
+          "units",
+          "data",
+          "provenance"
+        ],
+        "title": "StatisticsResponse"
+      },
+      "StorageColumnData": {
+        "properties": {
+          "datetime": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Datetime",
+            "description": "ISO 8601 timestamps, ascending"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "datetime"
+        ],
+        "title": "StorageColumnData",
+        "description": "Column-form storage data in MW.\n\nSame schema as :class:`ProductionColumnData` except the extra\ncolumns are storage modes (``hydro``, ``battery``). Sign follows\nENTSO-E A75 / B10 / B25 generation: the stored field is DISCHARGE\nMW, always non-negative. Charging consumption is implicit in the\nconsumption (load) number, not in this series."
+      },
+      "StorageResponse": {
+        "properties": {
+          "zone_key": {
+            "type": "string",
+            "title": "Zone Key"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Data source used for this response"
+          },
+          "data_type": {
+            "type": "string",
+            "title": "Data Type",
+            "default": "storage"
+          },
+          "resolution": {
+            "type": "string",
+            "title": "Resolution",
+            "description": "Output cadence. `native` returns the upstream cadence. `5M`/`15M`/`30M`/`1H` resample onto a uniform grid (mean-downsample if coarser, ffill-upsample carrying one upstream interval if finer).",
+            "default": "native"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start",
+            "description": "Start of time range (ISO 8601)"
+          },
+          "end": {
+            "type": "string",
+            "title": "End",
+            "description": "End of time range (ISO 8601)"
+          },
+          "data": {
+            "$ref": "#/components/schemas/StorageColumnData"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance",
+            "description": "timedatamodel DataType taxonomy annotation for the values in ``data``."
+          }
+        },
+        "type": "object",
+        "required": [
+          "zone_key",
+          "source",
+          "start",
+          "end",
+          "data",
+          "provenance"
+        ],
+        "title": "StorageResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "ZoneListResponse": {
+        "properties": {
+          "zones": {
+            "items": {
+              "$ref": "#/components/schemas/ZoneSummary"
+            },
+            "type": "array",
+            "title": "Zones"
+          }
+        },
+        "type": "object",
+        "required": [
+          "zones"
+        ],
+        "title": "ZoneListResponse"
+      },
+      "ZoneResponse": {
+        "properties": {
+          "zone_key": {
+            "type": "string",
+            "title": "Zone Key",
+            "description": "Zone identifier (e.g., 'DE', 'SE-SE1', 'US-NY-NYIS')"
+          },
+          "zone_name": {
+            "type": "string",
+            "title": "Zone Name",
+            "description": "Human-readable zone name"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country",
+            "description": "ISO country code"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone",
+            "description": "IANA timezone identifier"
+          },
+          "sources": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Sources",
+            "description": "Available data sources and their data types. Example: {'entsoe': ['production', 'consumption', 'price']}"
+          },
+          "api_source": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Source",
+            "description": "Preferred source per data type, used when ?source= is omitted. Example: {'production': 'entsoe', 'frequency': 'fingrid'}"
+          },
+          "source_datatypes": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Datatypes",
+            "description": "Per data type, per source: how the data is collected. Values: 'measured' (direct TSO/ISO measurement), 'derived' (computed from energy balance), 'modeled' (statistical estimate), 'estimated'. Example: {'consumption': {'entsoe': 'measured', 'derived': 'derived'}}. Null for zones not yet annotated."
+          }
+        },
+        "type": "object",
+        "required": [
+          "zone_key",
+          "zone_name",
+          "country",
+          "timezone",
+          "sources"
+        ],
+        "title": "ZoneResponse"
+      },
+      "ZoneSourceEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Source short name (e.g. ``entsoe``, ``elia``)."
+          },
+          "variable": {
+            "type": "string",
+            "title": "Variable",
+            "description": "Data type this entry describes (``production``, ``installed_capacity``, ``electricity_generation``, ``electricity_demand``, ``power_sector_emissions``, ``carbon_intensity``, ``consumption``, ``exchange``, ``price``, ``frequency``, ``storage``)."
+          },
+          "granularity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Granularity",
+            "description": "Upstream publish cadence as an ISO-8601 duration (``PT15M``, ``PT60M``). Null when the registry has no entry."
+          },
+          "entsoe_baseline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entsoe Baseline",
+            "description": "ENTSO-E document type this source is compared against (``A65``, ``A68``, ``A75``, ``A44``, ``A11``). Null when there is no ENTSO-E equivalent."
+          },
+          "delta_vs_baseline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta Vs Baseline",
+            "description": "Free-text note describing how this source's definition differs from its ENTSO-E baseline. ``baseline (definition)`` means the source IS the baseline. Null when no baseline exists."
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Provenance"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Default timedatamodel DataType classification for this (source, variable) pair."
+          },
+          "default": {
+            "type": "boolean",
+            "title": "Default",
+            "description": "True if this source is the zone's default for the variable — i.e. what the data endpoints return when ``?source=`` is omitted."
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "variable",
+          "default"
+        ],
+        "title": "ZoneSourceEntry"
+      },
+      "ZoneSourcesResponse": {
+        "properties": {
+          "zone_key": {
+            "type": "string",
+            "title": "Zone Key",
+            "description": "Zone the response is scoped to."
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/ZoneSourceEntry"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "One entry per (source, variable) reachable for this zone."
+          }
+        },
+        "type": "object",
+        "required": [
+          "zone_key",
+          "sources"
+        ],
+        "title": "ZoneSourcesResponse"
+      },
+      "ZoneSummary": {
+        "properties": {
+          "zone_key": {
+            "type": "string",
+            "title": "Zone Key",
+            "description": "Zone identifier (e.g., 'DE', 'SE-SE1', 'US-NY-NYIS')"
+          },
+          "zone_name": {
+            "type": "string",
+            "title": "Zone Name",
+            "description": "Human-readable zone name"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country",
+            "description": "ISO country code"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone",
+            "description": "IANA timezone identifier"
+          },
+          "sources": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Sources",
+            "description": "Available data sources and their data types. Example: {'entsoe': ['production', 'consumption', 'price']}"
+          },
+          "api_source": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Source",
+            "description": "Preferred source per data type, used when ?source= is omitted. Example: {'production': 'entsoe', 'frequency': 'fingrid'}"
+          },
+          "source_datatypes": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Datatypes",
+            "description": "Per data type, per source: how the data is collected. Values: 'measured' (direct TSO/ISO measurement), 'derived' (computed from energy balance), 'modeled' (statistical estimate), 'estimated'. Example: {'consumption': {'entsoe': 'measured', 'derived': 'derived'}}. Null for zones not yet annotated."
+          }
+        },
+        "type": "object",
+        "required": [
+          "zone_key",
+          "zone_name",
+          "country",
+          "timezone",
+          "sources"
+        ],
+        "title": "ZoneSummary"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyQuery": {
+        "type": "apiKey",
+        "in": "query",
+        "name": "api_key"
+      },
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Data Sources",
+      "description": "Lists every data source used by the API — name, organisation, website, and when it was added. Each source listed here can be selected via `?source=` on the data endpoints."
+    },
+    {
+      "name": "Geo",
+      "description": "Geopolygon datasets for country borders, bidding zones, control areas, and zone polygons. `GET /v1/geo` lists what's available; `GET /v1/geo/{name}/features` returns a GeoJSON FeatureCollection (`Content-Type: application/geo+json`). Filter with `?country=` or `?ids=`, or pin a specific version with `?version=YYYY-MM-DD`. Available datasets: `world_zones`, `entsoe_cty`, `entsoe_bzn`, `entsoe_cta`."
+    },
+    {
+      "name": "Areas",
+      "description": "Canonical metadata for countries, bidding zones, TSO/control areas, synchronous areas, and market-coupling areas. Country area ids use ISO 3166-1 alpha-2 codes; legacy zone keys remain valid identifiers for bidding/control areas."
+    },
+    {
+      "name": "Assets",
+      "description": "Physical infrastructure assets with GeoJSON geometry. Current data covers GEM operating power plants; the schema can also represent future line assets."
+    },
+    {
+      "name": "Zones",
+      "description": "Zone metadata — list zones, see which data types are available, and discover data sources per zone."
+    },
+    {
+      "name": "Physical flow pairs",
+      "description": "Lists all configured cross-border and inter-zonal physical flow pairs (ENTSO-E TR 12.1.G *Physical Flow*). Use a pair key with `GET /v1/exchange/flows/{key}` to query the flow data. URL paths keep the legacy `exchange` slug for backwards compatibility."
+    },
+    {
+      "name": "Production",
+      "description": "Electricity generation broken down by fuel type (solar, wind, hydro, nuclear, coal, gas, oil, biomass, geothermal). Values in MW."
+    },
+    {
+      "name": "Statistics",
+      "description": "Period aggregate and reference datasets. Installed capacity is available from ENTSO-E annual A68 and Ember monthly capacity; Ember also provides country-level monthly and annual electricity generation, demand, power-sector emissions, and carbon intensity."
+    },
+    {
+      "name": "Consumption",
+      "description": "Total electricity consumption (system load). Values in MW."
+    },
+    {
+      "name": "Storage",
+      "description": "Net storage output — pumped hydro and battery discharge. Positive values mean discharging to the grid. Values in MW."
+    },
+    {
+      "name": "Physical flow",
+      "description": "Measured cross-border (and inter-zonal) physical electricity flows — ENTSO-E TR 12.1.G *Physical Flow*. **Not** commercial / nominated schedules (TR 12.1.F). Values in MW. URL paths keep the legacy `exchange` slug for backwards compatibility."
+    },
+    {
+      "name": "Transfer capacity",
+      "description": "Cross-border transfer capacity (NTC and MaxBex) per direction. Sources: ENTSO-E A61 Net Transfer Capacity forecasts for NTC borders, JAO MaxBex for flow-based regions (CORE, Nordic, SWE, Italy-North, Cross-CCR). Capacity is asymmetric — both directions are returned in a single call. Values in MW."
+    },
+    {
+      "name": "Prices",
+      "description": "Day-ahead spot market electricity prices. Values in EUR/MWh (USD/MWh for US zones)."
+    },
+    {
+      "name": "Frequency",
+      "description": "Grid frequency in Hz. Frequency is measured per synchronous area, not per zone — the Nordic grid, for example, has one shared frequency. Query by zone or by synchronous area code (NSA, CESA, GBSA, ISA, BSA, IPSA)."
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rebase-grid"
+version = "0.1.0"
+description = "Python client for the Rebase Grid API (power-system data from TSOs worldwide)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "DFC Economics" }]
+keywords = ["rebase", "energy", "power", "grid", "entsoe", "tso", "electricity"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "requests>=2.28",
+    "pandas>=1.5",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+geo = ["geopandas>=0.13"]
+dev = [
+    "pytest>=7.0",
+    "requests-mock>=1.11",
+]
+
+[project.urls]
+Homepage = "https://rebase.energy"
+Documentation = "https://grid.rebase.energy"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rebase_grid"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

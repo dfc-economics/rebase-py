@@ -25,6 +25,7 @@ dependencies = [
 
 [project.optional-dependencies]
 geo = ["geopandas>=0.13"]
+notebook = ["matplotlib>=3.6", "ipykernel>=6.0"]
 dev = [
     "pytest>=7.0",
     "requests-mock>=1.11",

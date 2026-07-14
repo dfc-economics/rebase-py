@@ -24,3 +24,7 @@ env/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local scratch notebooks (personal, not part of the library)
+notebooks/
+.ipynb_checkpoints/

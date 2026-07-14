@@ -1,5 +1,7 @@
 # rebase-grid
 
+![CI](https://github.com/dfc-economics/rebase-py/actions/workflows/ci.yml/badge.svg)
+
 Python client for the [Rebase Grid API](https://grid.rebase.energy) — REST access
 to power-system data (production, price, consumption, exchange, frequency,
 statistics, geo, assets) from 70+ TSO parsers worldwide.

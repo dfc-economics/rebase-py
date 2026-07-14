@@ -40,3 +40,6 @@ packages = ["src/rebase_grid"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Put the repo root on sys.path so `from tests.conftest import ...` resolves
+# regardless of how pytest is invoked (plain `pytest` vs `python -m pytest`).
+pythonpath = ["."]

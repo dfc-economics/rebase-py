@@ -5,13 +5,26 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from rebase_grid import EndpointNotDeployedError, NoMatchingDataError
+from rebase_grid import NoMatchingDataError
 from tests.conftest import BASE_URL
 
 
-def test_list_areas_stub_raises(pandas_client):
-    with pytest.raises(EndpointNotDeployedError):
-        pandas_client.list_areas()
+def test_list_areas_returns_dataframe(pandas_client, areas_payload, requests_mock):
+    requests_mock.get(f"{BASE_URL}/v1/areas", json=areas_payload)
+    df = pandas_client.list_areas(country_code="DE")
+    assert isinstance(df, pd.DataFrame)
+    assert list(df["area_id"]) == ["DE", "FR"]
+
+
+def test_list_assets_paginated_attrs(pandas_client, requests_mock):
+    payload = {
+        "assets": [{"asset_id": "a1", "asset_type": "power_plant", "name": "X"}],
+        "total": 10475, "limit": 1, "offset": 0,
+    }
+    requests_mock.get(f"{BASE_URL}/v1/assets", json=payload)
+    df = pandas_client.list_assets(country_code="DE", limit=1)
+    assert df.attrs["total"] == 10475
+    assert list(df["asset_id"]) == ["a1"]
 
 
 def test_list_zones_returns_dataframe(pandas_client, zones_payload, requests_mock):

@@ -59,12 +59,3 @@ class RateLimitError(RebaseHTTPError):
 
 class NoMatchingDataError(RebaseError):
     """Raised when the API responds successfully but contains no data rows."""
-
-
-class EndpointNotDeployedError(RebaseError):
-    """Raised for endpoints that the OpenAPI docs describe but the live server
-    does not yet implement (they currently return ``404``).
-
-    As of API version 0.2.0 this covers the ``Areas``, ``Assets``, and
-    ``Statistics`` families. See the README's "docs-vs-server discrepancy" note.
-    """

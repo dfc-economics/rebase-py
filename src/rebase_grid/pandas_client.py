@@ -14,8 +14,6 @@ Conventions
 - **Single-entity metadata** (a zone, an exchange pair) returns a ``Series``.
 - **Geo feature** endpoints return the raw GeoJSON ``dict`` (drop straight into
   geopandas); only the dataset *listing* is tabularised.
-- The documented-but-undeployed stubs are inherited unchanged and raise
-  :class:`~rebase_grid.exceptions.EndpointNotDeployedError`.
 """
 
 from __future__ import annotations
@@ -152,6 +150,107 @@ class RebasePandasClient(RebaseRawClient):
         payload = super().query_grid_installed_capacity(start=start, end=end)
         return _attach(parse_grid_capacity(payload), payload, "unit")
 
+    def query_installed_capacity_sources(
+        self,
+        zone_key: str,
+        start: Optional[DateLike] = None,
+        end: Optional[DateLike] = None,
+    ) -> pd.DataFrame:
+        """``GET /v1/statistics/installed-capacity/{zone_key}/sources`` ->
+        DataFrame, one row per source."""
+        payload = super().query_installed_capacity_sources(zone_key, start=start, end=end)
+        return _attach(parse_records(payload.get("sources", [])), payload,
+                       "zone_key", "unit")
+
+    # ------------------------------------------------------------------ #
+    # Statistics (period aggregates: monthly / yearly)
+    # ------------------------------------------------------------------ #
+    def query_carbon_intensity(
+        self,
+        zone_key: str,
+        resolution: str = "monthly",
+        start: Optional[DateLike] = None,
+        end: Optional[DateLike] = None,
+        source: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """``GET /v1/statistics/carbon-intensity/{zone_key}`` -> DataFrame."""
+        payload = super().query_carbon_intensity(
+            zone_key, resolution=resolution, start=start, end=end, source=source
+        )
+        return _attach(parse_columnar(payload["data"]), payload,
+                       "units", "source", "resolution", "zone_key")
+
+    def query_electricity_demand(
+        self,
+        zone_key: str,
+        resolution: str = "monthly",
+        start: Optional[DateLike] = None,
+        end: Optional[DateLike] = None,
+        source: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """``GET /v1/statistics/electricity-demand/{zone_key}`` -> DataFrame."""
+        payload = super().query_electricity_demand(
+            zone_key, resolution=resolution, start=start, end=end, source=source
+        )
+        return _attach(parse_columnar(payload["data"]), payload,
+                       "units", "source", "resolution", "zone_key")
+
+    def query_electricity_generation(
+        self,
+        zone_key: str,
+        resolution: str = "monthly",
+        start: Optional[DateLike] = None,
+        end: Optional[DateLike] = None,
+        source: Optional[str] = None,
+        series: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """``GET /v1/statistics/electricity-generation/{zone_key}`` -> DataFrame."""
+        payload = super().query_electricity_generation(
+            zone_key, resolution=resolution, start=start, end=end,
+            source=source, series=series,
+        )
+        return _attach(parse_columnar(payload["data"]), payload,
+                       "units", "source", "resolution", "zone_key")
+
+    def query_power_sector_emissions(
+        self,
+        zone_key: str,
+        resolution: str = "monthly",
+        start: Optional[DateLike] = None,
+        end: Optional[DateLike] = None,
+        source: Optional[str] = None,
+        series: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """``GET /v1/statistics/power-sector-emissions/{zone_key}`` -> DataFrame."""
+        payload = super().query_power_sector_emissions(
+            zone_key, resolution=resolution, start=start, end=end,
+            source=source, series=series,
+        )
+        return _attach(parse_columnar(payload["data"]), payload,
+                       "units", "source", "resolution", "zone_key")
+
+    # ------------------------------------------------------------------ #
+    # Forecast
+    # ------------------------------------------------------------------ #
+    def query_forecast(
+        self,
+        zone_key: str,
+        variable: str,
+        start: Optional[DateLike] = None,
+        end: Optional[DateLike] = None,
+        model: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """``GET /v1/zone/{zone_key}/forecast`` -> datetime-indexed DataFrame.
+
+        Requires timezone-aware ``start``/``end`` (see the raw client). Raises
+        ``NotFoundError`` when no model is registered for the zone/variable.
+        """
+        payload = super().query_forecast(
+            zone_key, variable, start=start, end=end, model=model
+        )
+        return _attach(parse_columnar(payload["data"]), payload,
+                       "variable", "model", "source", "zone_key")
+
     # ------------------------------------------------------------------ #
     # Exchange
     # ------------------------------------------------------------------ #
@@ -220,3 +319,78 @@ class RebasePandasClient(RebaseRawClient):
     def list_geo_datasets(self) -> pd.DataFrame:
         """``GET /v1/geo`` -> DataFrame of registered geo datasets."""
         return parse_records(super().list_geo_datasets().get("datasets", []))
+
+    # ------------------------------------------------------------------ #
+    # Areas (canonical metadata)
+    # ------------------------------------------------------------------ #
+    def list_areas(
+        self,
+        area_type: Optional[str] = None,
+        country_code: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """``GET /v1/areas`` -> DataFrame, one row per area."""
+        payload = super().list_areas(area_type=area_type, country_code=country_code)
+        return parse_records(payload.get("areas", []))
+
+    def get_area(self, area_id: str) -> pd.Series:
+        """``GET /v1/areas/{area_id}`` -> Series of the area's metadata."""
+        return pd.Series(super().get_area(area_id))
+
+    def get_area_coverage(
+        self,
+        area_id: str,
+        resolution: Optional[str] = None,
+        start: Optional[DateLike] = None,
+        end: Optional[DateLike] = None,
+        source: Optional[str] = None,
+        provenance: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """``GET /v1/areas/{area_id}/coverage`` -> DataFrame of coverage series."""
+        payload = super().get_area_coverage(
+            area_id, resolution=resolution, start=start, end=end,
+            source=source, provenance=provenance,
+        )
+        return parse_records(payload.get("series", []))
+
+    def get_area_sources(self, area_id: str) -> pd.DataFrame:
+        """``GET /v1/areas/{area_id}/sources`` -> DataFrame of sources."""
+        return parse_records(super().get_area_sources(area_id).get("sources", []))
+
+    def list_area_assets(
+        self,
+        area_id: str,
+        asset_type: Optional[str] = None,
+        source: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> pd.DataFrame:
+        """``GET /v1/areas/{area_id}/assets`` -> DataFrame of assets."""
+        payload = super().list_area_assets(
+            area_id, asset_type=asset_type, source=source, limit=limit, offset=offset
+        )
+        return _attach(parse_records(payload.get("assets", [])), payload,
+                       "total", "limit", "offset")
+
+    # ------------------------------------------------------------------ #
+    # Assets (paginated; total/limit/offset in .attrs)
+    # ------------------------------------------------------------------ #
+    def list_assets(
+        self,
+        asset_type: Optional[str] = None,
+        area_id: Optional[str] = None,
+        country_code: Optional[str] = None,
+        source: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> pd.DataFrame:
+        """``GET /v1/assets`` -> DataFrame of assets (``total`` in ``.attrs``)."""
+        payload = super().list_assets(
+            asset_type=asset_type, area_id=area_id, country_code=country_code,
+            source=source, limit=limit, offset=offset,
+        )
+        return _attach(parse_records(payload.get("assets", [])), payload,
+                       "total", "limit", "offset")
+
+    def get_asset(self, asset_id: str) -> pd.Series:
+        """``GET /v1/assets/{asset_id}`` -> Series of the asset (GeoJSON geometry)."""
+        return pd.Series(super().get_asset(asset_id))

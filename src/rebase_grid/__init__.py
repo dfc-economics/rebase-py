@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from .exceptions import (
     AuthenticationError,
-    EndpointNotDeployedError,
     InvalidParameterError,
     NoMatchingDataError,
     NotFoundError,
@@ -29,7 +28,7 @@ from .exceptions import (
 from .pandas_client import RebasePandasClient
 from .raw_client import RebaseRawClient
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "RebaseRawClient",
@@ -42,6 +41,5 @@ __all__ = [
     "NotFoundError",
     "RateLimitError",
     "NoMatchingDataError",
-    "EndpointNotDeployedError",
     "__version__",
 ]

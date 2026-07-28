@@ -50,17 +50,16 @@ returns the decoded payloads untouched.
 
 ## Coverage
 
-All 22 endpoints the live server implements are wired up on both clients:
+All endpoints the live server implements are wired up on both clients:
 
 - **Zones:** `list_zones`, `get_zone`, `get_zone_coverage`, `get_zone_sources`, `list_sources`
-- **Timeseries:** `query_production`, `query_price`, `query_consumption`, `query_storage`, `query_installed_capacity`, `query_grid_installed_capacity`
+- **Areas:** `list_areas`, `get_area`, `get_area_coverage`, `get_area_sources`, `list_area_assets`
+- **Assets:** `list_assets`, `get_asset` (paginated — `total`/`limit`/`offset` in `.attrs`)
+- **Timeseries:** `query_production`, `query_price`, `query_consumption`, `query_storage`, `query_forecast`
+- **Statistics:** `query_installed_capacity`, `query_installed_capacity_sources`, `query_grid_installed_capacity`, `query_carbon_intensity`, `query_electricity_demand`, `query_electricity_generation`, `query_power_sector_emissions`
 - **Exchange:** `list_exchanges`, `get_exchange`, `get_exchange_coverage`, `get_exchange_sources`, `query_exchange_flows`, `query_transfer_capacity`
 - **Frequency:** `get_frequency_live`
 - **Geo:** `list_geo_datasets`, `get_geo_dataset`, `get_geo_features`, `get_geo_feature`
-
-The 11 documented-but-undeployed methods (`list_areas`, `get_area*`,
-`list_assets`, `get_asset`, and the four `query_*` statistics datasets) exist as
-stubs that raise `EndpointNotDeployedError` until the server ships them.
 
 Return-type conventions (pandas client): timeseries → tz-aware
 `DatetimeIndex` `DataFrame`; single-value series (`query_price`,
@@ -68,24 +67,25 @@ Return-type conventions (pandas client): timeseries → tz-aware
 single-entity metadata → `Series`; geo feature payloads → raw GeoJSON `dict`.
 Top-level metadata (source, currency, units, …) is attached to `.attrs`.
 
-### Base URL & docs-vs-server discrepancy
+### Base URL and API notes
 
 The live API is served under `https://grid.rebase.energy/api`. The host root is a
 single-page app that returns HTML for any path, so it must not be used as the base.
 
-The published docs (`/docs`, and the bundled `docs/api-1.json`) describe **32
-endpoints**, but the deployed server (`/api/openapi.json`) implements only **22** —
-both are labelled `version 0.2.0`. This library targets what is actually live.
+Notes on the current server (API `v0.2.0`), verified live:
 
-**Documented but not deployed (return 404):** the entire *Areas* family
-(`/v1/areas*`), *Assets* family (`/v1/assets*`), and *Statistics* family
-(`/v1/statistics/*`). Methods for these exist in the client but will raise
-`NotFoundError` until the server ships them.
-
-**Deployed but undocumented (work today):** installed capacity lives at
-`/v1/zone/{zone_key}/installed-capacity` and `/v1/grid/installed-capacity` — **not**
-the documented `/v1/statistics/installed-capacity/{zone_key}` (which 404s). Use
-`query_installed_capacity()` / `query_grid_installed_capacity()`.
+- **Statistics resolution** is `monthly` or `yearly` (required), *not* the
+  `native/5M/15M/30M/1H` grid used by production/exchange.
+- **Installed capacity** is at `/v1/statistics/installed-capacity/{zone_key}`
+  (it moved here in a server update — the old `/v1/zone/.../installed-capacity`
+  path now 404s). `query_installed_capacity()` targets the current path.
+- **Statistics datasets are routed but not yet populated:** the
+  `carbon-intensity`, `electricity-demand`, `electricity-generation`, and
+  `power-sector-emissions` endpoints return `200` with empty data for every
+  zone, so `query_*` on them currently raises `NoMatchingDataError`. They will
+  return data automatically once Rebase ingests the Ember statistics.
+- **Forecast** needs timezone-aware `start`/`end` and a registered model for the
+  zone/variable, else `404`.
 
 ## Errors
 

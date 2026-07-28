@@ -21,7 +21,6 @@ from urllib3.util.retry import Retry
 from .decorators import DateLike, clean_params, to_iso8601
 from .exceptions import (
     AuthenticationError,
-    EndpointNotDeployedError,
     InvalidParameterError,
     NotFoundError,
     RateLimitError,
@@ -245,15 +244,25 @@ class RebaseRawClient:
         source: Optional[str] = None,
         breakdown: Optional[str] = None,
     ) -> dict:
-        """``GET /v1/zone/{zone_key}/installed-capacity`` — installed generation
-        capacity by fuel (MW, annual ``P1Y`` resolution).
+        """``GET /v1/statistics/installed-capacity/{zone_key}`` — installed
+        generation capacity by fuel (MW, annual ``P1Y`` resolution).
 
-        NB: the docs place this under ``/v1/statistics/installed-capacity/...``,
-        which is **not** deployed; this method targets the live path.
-        ``start`` defaults to ``2015-01-01`` server-side.
+        ``start`` defaults to ``2015-01-01`` server-side; ``breakdown`` defaults
+        to ``fuel``.
         """
         params = self._timeseries_params(start, end, source=source, breakdown=breakdown)
-        return self._get(f"/v1/zone/{zone_key}/installed-capacity", params)
+        return self._get(f"/v1/statistics/installed-capacity/{zone_key}", params)
+
+    def query_installed_capacity_sources(
+        self,
+        zone_key: str,
+        start: Optional[DateLike] = None,
+        end: Optional[DateLike] = None,
+    ) -> dict:
+        """``GET /v1/statistics/installed-capacity/{zone_key}/sources`` — the
+        installed-capacity series broken out per source."""
+        params = self._timeseries_params(start, end)
+        return self._get(f"/v1/statistics/installed-capacity/{zone_key}/sources", params)
 
     def query_grid_installed_capacity(
         self,
@@ -355,55 +364,174 @@ class RebaseRawClient:
         return self._get(f"/v1/geo/{name}/features/{feature_id}")
 
     # ================================================================== #
-    # Documented but NOT deployed on the live server (return 404).
-    # These stubs raise a clear error instead of a bare 404 so callers know
-    # the endpoint exists in the docs but is not yet shipped. See README.
+    # Forecast
     # ================================================================== #
-    def list_areas(self, area_type: Optional[str] = None,
-                   country_code: Optional[str] = None) -> dict:
-        """``GET /v1/areas`` — *documented but not deployed.* Use
-        :meth:`list_zones` for zone metadata in the meantime."""
-        raise _not_deployed("/v1/areas", alt="list_zones()")
+    def query_forecast(
+        self,
+        zone_key: str,
+        variable: str,
+        start: Optional[DateLike] = None,
+        end: Optional[DateLike] = None,
+        model: Optional[str] = None,
+    ) -> dict:
+        """``GET /v1/zone/{zone_key}/forecast`` — model forecast for a variable.
+
+        ``variable`` is required, one of ``demand|wind|solar`` (see
+        :data:`rebase_grid.mappings.FORECAST_VARIABLES`). The server requires
+        **timezone-aware** ``start``/``end`` — pass a ``datetime``/``Timestamp``
+        (naive values are coerced to UTC) rather than a bare date string. Not
+        every zone/variable has a registered model (``404`` if none).
+        """
+        params = self._timeseries_params(start, end, variable=variable, model=model)
+        return self._get(f"/v1/zone/{zone_key}/forecast", params)
+
+    # ================================================================== #
+    # Areas (canonical metadata: countries, bidding zones, control areas)
+    # ================================================================== #
+    def list_areas(
+        self,
+        area_type: Optional[str] = None,
+        country_code: Optional[str] = None,
+    ) -> dict:
+        """``GET /v1/areas`` — countries, bidding zones, and control areas.
+
+        ``area_type`` filters by kind (e.g. ``country``, ``bidding_zone``,
+        ``control_area``); ``country_code`` by ISO 3166-1 alpha-2.
+        """
+        params = {"area_type": area_type, "country_code": country_code}
+        return self._get("/v1/areas", params)
 
     def get_area(self, area_id: str) -> dict:
-        """``GET /v1/areas/{area_id}`` — *documented but not deployed.*"""
-        raise _not_deployed("/v1/areas/{area_id}", alt="get_zone()")
+        """``GET /v1/areas/{area_id}`` — metadata for a single area."""
+        return self._get(f"/v1/areas/{area_id}")
 
-    def get_area_coverage(self, area_id: str) -> dict:
-        """``GET /v1/areas/{area_id}/coverage`` — *documented but not deployed.*"""
-        raise _not_deployed("/v1/areas/{area_id}/coverage", alt="get_zone_coverage()")
+    def get_area_coverage(
+        self,
+        area_id: str,
+        resolution: Optional[str] = None,
+        start: Optional[DateLike] = None,
+        end: Optional[DateLike] = None,
+        source: Optional[str] = None,
+        provenance: Optional[str] = None,
+    ) -> dict:
+        """``GET /v1/areas/{area_id}/coverage`` — data-availability buckets."""
+        params = self._timeseries_params(
+            start, end, resolution=resolution, source=source, provenance=provenance
+        )
+        return self._get(f"/v1/areas/{area_id}/coverage", params)
 
     def get_area_sources(self, area_id: str) -> dict:
-        """``GET /v1/areas/{area_id}/sources`` — *documented but not deployed.*"""
-        raise _not_deployed("/v1/areas/{area_id}/sources", alt="get_zone_sources()")
+        """``GET /v1/areas/{area_id}/sources`` — sources available for an area."""
+        return self._get(f"/v1/areas/{area_id}/sources")
 
-    def list_area_assets(self, area_id: str) -> dict:
-        """``GET /v1/areas/{area_id}/assets`` — *documented but not deployed.*"""
-        raise _not_deployed("/v1/areas/{area_id}/assets")
+    def list_area_assets(
+        self,
+        area_id: str,
+        asset_type: Optional[str] = None,
+        source: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> dict:
+        """``GET /v1/areas/{area_id}/assets`` — assets located in an area."""
+        params = {"asset_type": asset_type, "source": source,
+                  "limit": limit, "offset": offset}
+        return self._get(f"/v1/areas/{area_id}/assets", params)
 
-    def list_assets(self, **kwargs: Any) -> dict:
-        """``GET /v1/assets`` — *documented but not deployed.*"""
-        raise _not_deployed("/v1/assets")
+    # ================================================================== #
+    # Assets (physical infrastructure with GeoJSON geometry; paginated)
+    # ================================================================== #
+    def list_assets(
+        self,
+        asset_type: Optional[str] = None,
+        area_id: Optional[str] = None,
+        country_code: Optional[str] = None,
+        source: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> dict:
+        """``GET /v1/assets`` — physical assets (default 1000/page).
+
+        Paginated: the response carries ``total``, ``limit``, and ``offset``.
+        """
+        params = {
+            "asset_type": asset_type, "area_id": area_id,
+            "country_code": country_code, "source": source,
+            "limit": limit, "offset": offset,
+        }
+        return self._get("/v1/assets", params)
 
     def get_asset(self, asset_id: str) -> dict:
-        """``GET /v1/assets/{asset_id}`` — *documented but not deployed.*"""
-        raise _not_deployed("/v1/assets/{asset_id}")
+        """``GET /v1/assets/{asset_id}`` — one asset with GeoJSON geometry."""
+        return self._get(f"/v1/assets/{asset_id}")
 
-    def query_carbon_intensity(self, zone_key: str, **kwargs: Any) -> dict:
-        """``GET /v1/statistics/carbon-intensity/{zone_key}`` — *not deployed.*"""
-        raise _not_deployed("/v1/statistics/carbon-intensity/{zone_key}")
+    # ================================================================== #
+    # Statistics (period-aggregate datasets; resolution monthly|yearly)
+    # ================================================================== #
+    def query_carbon_intensity(
+        self,
+        zone_key: str,
+        resolution: str = "monthly",
+        start: Optional[DateLike] = None,
+        end: Optional[DateLike] = None,
+        source: Optional[str] = None,
+    ) -> dict:
+        """``GET /v1/statistics/carbon-intensity/{zone_key}`` — gCO2eq/kWh.
 
-    def query_electricity_demand(self, zone_key: str, **kwargs: Any) -> dict:
-        """``GET /v1/statistics/electricity-demand/{zone_key}`` — *not deployed.*"""
-        raise _not_deployed("/v1/statistics/electricity-demand/{zone_key}")
+        ``resolution`` is required by the API: ``monthly`` or ``yearly``.
+        """
+        params = self._timeseries_params(start, end, resolution=resolution, source=source)
+        return self._get(f"/v1/statistics/carbon-intensity/{zone_key}", params)
 
-    def query_electricity_generation(self, zone_key: str, **kwargs: Any) -> dict:
-        """``GET /v1/statistics/electricity-generation/{zone_key}`` — *not deployed.*"""
-        raise _not_deployed("/v1/statistics/electricity-generation/{zone_key}")
+    def query_electricity_demand(
+        self,
+        zone_key: str,
+        resolution: str = "monthly",
+        start: Optional[DateLike] = None,
+        end: Optional[DateLike] = None,
+        source: Optional[str] = None,
+    ) -> dict:
+        """``GET /v1/statistics/electricity-demand/{zone_key}`` — period demand.
 
-    def query_power_sector_emissions(self, zone_key: str, **kwargs: Any) -> dict:
-        """``GET /v1/statistics/power-sector-emissions/{zone_key}`` — *not deployed.*"""
-        raise _not_deployed("/v1/statistics/power-sector-emissions/{zone_key}")
+        ``resolution``: ``monthly`` or ``yearly`` (required by the API).
+        """
+        params = self._timeseries_params(start, end, resolution=resolution, source=source)
+        return self._get(f"/v1/statistics/electricity-demand/{zone_key}", params)
+
+    def query_electricity_generation(
+        self,
+        zone_key: str,
+        resolution: str = "monthly",
+        start: Optional[DateLike] = None,
+        end: Optional[DateLike] = None,
+        source: Optional[str] = None,
+        series: Optional[str] = None,
+    ) -> dict:
+        """``GET /v1/statistics/electricity-generation/{zone_key}`` — period generation.
+
+        ``resolution``: ``monthly`` or ``yearly`` (required by the API).
+        """
+        params = self._timeseries_params(
+            start, end, resolution=resolution, source=source, series=series
+        )
+        return self._get(f"/v1/statistics/electricity-generation/{zone_key}", params)
+
+    def query_power_sector_emissions(
+        self,
+        zone_key: str,
+        resolution: str = "monthly",
+        start: Optional[DateLike] = None,
+        end: Optional[DateLike] = None,
+        source: Optional[str] = None,
+        series: Optional[str] = None,
+    ) -> dict:
+        """``GET /v1/statistics/power-sector-emissions/{zone_key}`` — period emissions.
+
+        ``resolution``: ``monthly`` or ``yearly`` (required by the API).
+        """
+        params = self._timeseries_params(
+            start, end, resolution=resolution, source=source, series=series
+        )
+        return self._get(f"/v1/statistics/power-sector-emissions/{zone_key}", params)
 
     # ------------------------------------------------------------------ #
     # Context-manager support
@@ -416,17 +544,6 @@ class RebaseRawClient:
 
     def __exit__(self, *exc_info: object) -> None:
         self.close()
-
-
-def _not_deployed(path: str, alt: Optional[str] = None) -> EndpointNotDeployedError:
-    """Build the error raised by stubs for documented-but-undeployed routes."""
-    msg = (
-        f"Endpoint '{path}' is described in the API docs but is not deployed on "
-        f"the live server (it returns 404) as of API version 0.2.0."
-    )
-    if alt:
-        msg += f" Use {alt} instead."
-    return EndpointNotDeployedError(msg)
 
 
 def _extract_detail(response: requests.Response) -> str:

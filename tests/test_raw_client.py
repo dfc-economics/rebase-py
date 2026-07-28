@@ -6,7 +6,6 @@ import pytest
 
 from rebase_grid import (
     AuthenticationError,
-    EndpointNotDeployedError,
     InvalidParameterError,
     NotFoundError,
     RebaseConfigError,
@@ -54,10 +53,21 @@ def test_error_status_mapping(raw_client, requests_mock, status, exc):
         raw_client.list_zones()
 
 
-def test_undeployed_endpoint_raises_without_http(raw_client, requests_mock):
-    # Stubs must not hit the network; they raise before any request.
-    with pytest.raises(EndpointNotDeployedError):
-        raw_client.list_areas(country_code="DE")
-    with pytest.raises(EndpointNotDeployedError):
-        raw_client.query_carbon_intensity("DE")
-    assert requests_mock.call_count == 0
+def test_installed_capacity_uses_statistics_path(raw_client, requests_mock):
+    # Regression guard for the v0.2.0 breaking move off /v1/zone/.../installed-capacity.
+    m = requests_mock.get(
+        f"{BASE_URL}/v1/statistics/installed-capacity/DE",
+        json={"zone_key": "DE", "data": {"datetime": [], "period_end": []}},
+    )
+    raw_client.query_installed_capacity("DE")
+    assert m.called
+    assert m.last_request.path == "/api/v1/statistics/installed-capacity/de"
+
+
+def test_statistics_resolution_passed(raw_client, requests_mock):
+    m = requests_mock.get(
+        f"{BASE_URL}/v1/statistics/carbon-intensity/DE",
+        json={"zone_key": "DE", "data": {"datetime": []}},
+    )
+    raw_client.query_carbon_intensity("DE", resolution="yearly")
+    assert m.last_request.qs["resolution"] == ["yearly"]

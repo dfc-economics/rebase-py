@@ -2,7 +2,7 @@
 
 ![CI](https://github.com/dfc-economics/rebase-py/actions/workflows/ci.yml/badge.svg)
 
-Python client for the [Rebase Grid API](https://grid.rebase.energy) — REST access to
+Python client for the [Rebase Grid API](https://grid.rebase.energy) - REST access to
 power-system data (production, price, consumption, exchange, frequency, statistics,
 geo, and assets) sourced from TSOs and parsers worldwide.
 
@@ -58,14 +58,7 @@ print(price.attrs["currency"], price.head())
 production = client.query_production("DE", start="2024-01-01", end="2024-01-02")
 ```
 
-For raw JSON instead of pandas, use `RebaseRawClient` — same methods, decoded
-payloads returned untouched.
-
-**Return-type conventions** (pandas client): timeseries → tz-aware `DatetimeIndex`
-`DataFrame`; single-value series (`query_price`, `query_consumption`) → `Series`;
-collection metadata → `DataFrame`; single-entity metadata → `Series`; geo feature
-payloads → raw GeoJSON `dict`. Top-level metadata (source, currency, units, …) is
-attached to `.attrs`.
+For raw JSON instead of pandas, use `RebaseRawClient`.
 
 ## Available methods
 
@@ -77,11 +70,6 @@ attached to `.attrs`.
 - **Exchange:** `list_exchanges`, `get_exchange`, `get_exchange_coverage`, `get_exchange_sources`, `query_exchange_flows`, `query_transfer_capacity`
 - **Frequency:** `get_frequency_live`
 - **Geo:** `list_geo_datasets`, `get_geo_dataset`, `get_geo_features`, `get_geo_feature`
-
-A few endpoint-specific notes: statistics use a `monthly`/`yearly` resolution (not the
-`native/5M/15M/30M/1H` grid used by production and exchange); `query_forecast` needs
-timezone-aware `start`/`end`. Some upstream datasets are not yet fully populated, in
-which case a `query_*` call raises `NoMatchingDataError`.
 
 ## Errors
 

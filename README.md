@@ -2,15 +2,25 @@
 
 ![CI](https://github.com/dfc-economics/rebase-py/actions/workflows/ci.yml/badge.svg)
 
-Python client for the [Rebase Grid API](https://grid.rebase.energy) — REST access
-to power-system data (production, price, consumption, exchange, frequency,
-statistics, geo, assets) from 70+ TSO parsers worldwide.
+Python client for the [Rebase Grid API](https://grid.rebase.energy) — REST access to
+power-system data (production, price, consumption, exchange, frequency, statistics,
+geo, and assets) sourced from TSOs and parsers worldwide.
 
 The design follows [`entsoe-py`](https://github.com/EnergieID/entsoe-py): a thin
-**raw client** returning JSON, and a **pandas client** returning
-`DataFrame`/`Series`.
+**raw client** returning JSON, and a **pandas client** returning `DataFrame`/`Series`
+with tz-aware datetime indexes.
 
-## Install (development)
+> **Status: in active development.** The Rebase Grid API is itself evolving, and this
+> client tracks it — endpoints and response shapes may change as the upstream API
+> does. Pin a version if you need stability.
+
+## Install
+
+```bash
+pip install "git+https://github.com/dfc-economics/rebase-py.git"
+```
+
+For local development:
 
 ```bash
 python -m venv .venv
@@ -22,13 +32,13 @@ pip install -e ".[dev]"
 ## Authentication
 
 The clients read your token from the `REBASE_API_KEY` environment variable. Copy
-`.env.example` to `.env` and paste your token:
+`.env.example` to `.env` and add your token (`.env` is git-ignored):
 
 ```
 REBASE_API_KEY=your-token-here
 ```
 
-`.env` is git-ignored. You can also pass it explicitly: `RebasePandasClient(api_key="...")`.
+You can also pass it explicitly: `RebasePandasClient(api_key="...")`.
 
 ## Usage
 
@@ -40,17 +50,24 @@ client = RebasePandasClient()  # reads REBASE_API_KEY from env / .env
 # Metadata: one row per zone
 zones = client.list_zones()
 
-# Day-ahead price as a tz-aware Series (currency in series.attrs)
+# Day-ahead price as a tz-aware Series (currency in .attrs)
 price = client.query_price("DE", start="2024-01-01", end="2024-01-02")
 print(price.attrs["currency"], price.head())
+
+# Generation by fuel as a DataFrame (one column per fuel)
+production = client.query_production("DE", start="2024-01-01", end="2024-01-02")
 ```
 
-Need the raw JSON instead? Use `RebaseRawClient`, which has the same methods but
-returns the decoded payloads untouched.
+For raw JSON instead of pandas, use `RebaseRawClient` — same methods, decoded
+payloads returned untouched.
 
-## Coverage
+**Return-type conventions** (pandas client): timeseries → tz-aware `DatetimeIndex`
+`DataFrame`; single-value series (`query_price`, `query_consumption`) → `Series`;
+collection metadata → `DataFrame`; single-entity metadata → `Series`; geo feature
+payloads → raw GeoJSON `dict`. Top-level metadata (source, currency, units, …) is
+attached to `.attrs`.
 
-All endpoints the live server implements are wired up on both clients:
+## Available methods
 
 - **Zones:** `list_zones`, `get_zone`, `get_zone_coverage`, `get_zone_sources`, `list_sources`
 - **Areas:** `list_areas`, `get_area`, `get_area_coverage`, `get_area_sources`, `list_area_assets`
@@ -61,35 +78,17 @@ All endpoints the live server implements are wired up on both clients:
 - **Frequency:** `get_frequency_live`
 - **Geo:** `list_geo_datasets`, `get_geo_dataset`, `get_geo_features`, `get_geo_feature`
 
-Return-type conventions (pandas client): timeseries → tz-aware
-`DatetimeIndex` `DataFrame`; single-value series (`query_price`,
-`query_consumption`) → `Series`; collection metadata → `DataFrame`;
-single-entity metadata → `Series`; geo feature payloads → raw GeoJSON `dict`.
-Top-level metadata (source, currency, units, …) is attached to `.attrs`.
-
-### Base URL and API notes
-
-The live API is served under `https://grid.rebase.energy/api`. The host root is a
-single-page app that returns HTML for any path, so it must not be used as the base.
-
-Notes on the current server (API `v0.2.0`), verified live:
-
-- **Statistics resolution** is `monthly` or `yearly` (required), *not* the
-  `native/5M/15M/30M/1H` grid used by production/exchange.
-- **Installed capacity** is at `/v1/statistics/installed-capacity/{zone_key}`
-  (it moved here in a server update — the old `/v1/zone/.../installed-capacity`
-  path now 404s). `query_installed_capacity()` targets the current path.
-- **Statistics datasets are routed but not yet populated:** the
-  `carbon-intensity`, `electricity-demand`, `electricity-generation`, and
-  `power-sector-emissions` endpoints return `200` with empty data for every
-  zone, so `query_*` on them currently raises `NoMatchingDataError`. They will
-  return data automatically once Rebase ingests the Ember statistics.
-- **Forecast** needs timezone-aware `start`/`end` and a registered model for the
-  zone/variable, else `404`.
+A few endpoint-specific notes: statistics use a `monthly`/`yearly` resolution (not the
+`native/5M/15M/30M/1H` grid used by production and exchange); `query_forecast` needs
+timezone-aware `start`/`end`. Some upstream datasets are not yet fully populated, in
+which case a `query_*` call raises `NoMatchingDataError`.
 
 ## Errors
 
-All errors derive from `rebase_grid.RebaseError`:
-`AuthenticationError` (401/403), `NotFoundError` (404),
-`InvalidParameterError` (422), `RateLimitError` (429), `NoMatchingDataError`
-(empty result), and `RebaseConfigError` (e.g. missing API key).
+All errors derive from `rebase_grid.RebaseError`: `AuthenticationError` (401/403),
+`NotFoundError` (404), `InvalidParameterError` (422), `RateLimitError` (429),
+`NoMatchingDataError` (empty result), and `RebaseConfigError` (e.g. missing API key).
+
+## License
+
+MIT

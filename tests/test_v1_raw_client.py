@@ -9,15 +9,15 @@ from rebase_grid import (
     InvalidParameterError,
     NotFoundError,
     RebaseConfigError,
-    RebaseRawClient,
 )
-from tests.conftest import BASE_URL, TEST_KEY
+from rebase_grid.v1 import RebaseRawClient
+from tests.conftest import BASE_URL, TEST_KEY  # BASE_URL = v1 base
 
 
 def test_missing_api_key_raises(monkeypatch):
     monkeypatch.delenv("REBASE_API_KEY", raising=False)
     # Avoid picking up a real key from a local .env during the test.
-    monkeypatch.setattr("rebase_grid.raw_client.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr("rebase_grid._http.load_dotenv", lambda *a, **k: None)
     with pytest.raises(RebaseConfigError):
         RebaseRawClient(api_key=None)
 

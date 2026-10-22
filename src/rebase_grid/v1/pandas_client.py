@@ -22,7 +22,7 @@ from typing import Optional
 
 import pandas as pd
 
-from .decorators import DateLike
+from ..decorators import DateLike
 from .parsers import (
     parse_columnar,
     parse_exchange_flows,

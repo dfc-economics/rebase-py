@@ -1,141 +1,30 @@
-"""Low-level Rebase Grid client returning raw JSON.
+"""Low-level Rebase Grid **v1** client returning raw JSON (legacy API).
 
-``RebaseRawClient`` mirrors ``entsoe-py``'s ``EntsoeRawClient``: it handles
-authentication, retries, and error mapping, and every endpoint method returns
-the decoded JSON (``dict``/``list``) exactly as the API sends it.
+``RebaseRawClient`` mirrors ``entsoe-py``'s ``EntsoeRawClient``: every endpoint
+method returns the decoded JSON (``dict``/``list``) exactly as the API sends it.
+Authentication, retries and error mapping live in :mod:`rebase_grid._http`.
 
-The pandas layer (:class:`rebase_grid.pandas_client.RebasePandasClient`)
+The pandas layer (:class:`rebase_grid.v1.pandas_client.RebasePandasClient`)
 subclasses this and parses those payloads into DataFrames/Series.
 """
 
 from __future__ import annotations
 
-import os
 from typing import Any, Iterable, Optional, Union
 
-import requests
-from dotenv import load_dotenv
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
-from .decorators import DateLike, clean_params, to_iso8601
-from .exceptions import (
-    AuthenticationError,
-    InvalidParameterError,
-    NotFoundError,
-    RateLimitError,
-    RebaseConfigError,
-    RebaseHTTPError,
-)
+from .._http import BaseClient
+from ..decorators import DateLike, to_iso8601
 
-# The live API is served under "/api" (the host root is an SPA that returns
-# 200/HTML for any path, so it must NOT be used as the base). Note: some newer
-# spec routes (/v1/areas, /v1/assets) are not deployed on this server yet and
-# currently return 404 — use the /v1/zone/* metadata endpoints instead.
+# The v1 API is served under "/api" (the host root is an SPA that returns
+# 200/HTML for any path, so it must NOT be used as the base).
 DEFAULT_BASE_URL = "https://grid.rebase.energy/api"
-API_KEY_ENV_VAR = "REBASE_API_KEY"
-
-# Statuses worth retrying with backoff (transient server / rate-limit errors).
-_RETRY_STATUSES = (429, 500, 502, 503, 504)
 
 
-class RebaseRawClient:
-    """Thin HTTP wrapper over the Rebase Grid API returning raw JSON.
+class RebaseRawClient(BaseClient):
+    """Thin HTTP wrapper over the Rebase Grid v1 API returning raw JSON."""
 
-    Parameters
-    ----------
-    api_key:
-        Rebase API token. If omitted, it is read from the ``REBASE_API_KEY``
-        environment variable (a local ``.env`` is loaded automatically).
-    session:
-        Optional pre-configured :class:`requests.Session`. If omitted, one is
-        created with sensible retry/backoff defaults.
-    base_url:
-        API root. Defaults to ``https://grid.rebase.energy/api``.
-    timeout:
-        Per-request timeout in seconds.
-    max_retries:
-        Number of automatic retries for transient errors (429/5xx).
-    """
-
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        session: Optional[requests.Session] = None,
-        base_url: str = DEFAULT_BASE_URL,
-        timeout: float = 60.0,
-        max_retries: int = 3,
-    ) -> None:
-        if api_key is None:
-            load_dotenv()
-            api_key = os.getenv(API_KEY_ENV_VAR)
-        if not api_key:
-            raise RebaseConfigError(
-                "No API key provided. Pass api_key=... or set the "
-                f"{API_KEY_ENV_VAR} environment variable (e.g. in a .env file)."
-            )
-
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-        self.session = session or self._build_session(max_retries)
-        self.session.headers.update(
-            {"X-API-Key": self.api_key, "Accept": "application/json"}
-        )
-
-    # ------------------------------------------------------------------ #
-    # Infrastructure
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def _build_session(max_retries: int) -> requests.Session:
-        session = requests.Session()
-        retry = Retry(
-            total=max_retries,
-            backoff_factor=0.5,
-            status_forcelist=_RETRY_STATUSES,
-            allowed_methods=frozenset(["GET"]),
-            raise_on_status=False,
-        )
-        adapter = HTTPAdapter(max_retries=retry)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-        return session
-
-    def _get(self, path: str, params: Optional[dict] = None) -> Any:
-        """Perform a GET request and return decoded JSON.
-
-        Strips ``None`` params, maps HTTP errors to the client's exception
-        hierarchy, and returns the parsed JSON body.
-        """
-        url = f"{self.base_url}{path}"
-        try:
-            response = self.session.get(
-                url, params=clean_params(params or {}), timeout=self.timeout
-            )
-        except requests.RequestException as exc:  # network-level failure
-            raise RebaseHTTPError(f"Request to {url} failed: {exc}") from exc
-
-        self._raise_for_status(response)
-        return response.json()
-
-    @staticmethod
-    def _raise_for_status(response: requests.Response) -> None:
-        if response.ok:
-            return
-
-        status = response.status_code
-        detail = _extract_detail(response)
-        message = f"{status} {response.reason} for {response.url}: {detail}"
-
-        if status in (401, 403):
-            raise AuthenticationError(message, status, response)
-        if status == 404:
-            raise NotFoundError(message, status, response)
-        if status == 422:
-            raise InvalidParameterError(message, status, response)
-        if status == 429:
-            raise RateLimitError(message, status, response)
-        raise RebaseHTTPError(message, status, response)
+    default_base_url = DEFAULT_BASE_URL
 
     def _timeseries_params(
         self,
@@ -532,26 +421,3 @@ class RebaseRawClient:
             start, end, resolution=resolution, source=source, series=series
         )
         return self._get(f"/v1/statistics/power-sector-emissions/{zone_key}", params)
-
-    # ------------------------------------------------------------------ #
-    # Context-manager support
-    # ------------------------------------------------------------------ #
-    def close(self) -> None:
-        self.session.close()
-
-    def __enter__(self) -> "RebaseRawClient":
-        return self
-
-    def __exit__(self, *exc_info: object) -> None:
-        self.close()
-
-
-def _extract_detail(response: requests.Response) -> str:
-    """Best-effort extraction of an error message from a response body."""
-    try:
-        body = response.json()
-    except ValueError:
-        return response.text[:500]
-    if isinstance(body, dict) and "detail" in body:
-        return str(body["detail"])
-    return str(body)[:500]

@@ -12,7 +12,7 @@ from typing import Any, List, Mapping, Optional
 
 import pandas as pd
 
-from .exceptions import NoMatchingDataError
+from ..exceptions import NoMatchingDataError
 
 
 def parse_columnar(

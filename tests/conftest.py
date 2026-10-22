@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from rebase_grid import RebasePandasClient, RebaseRawClient
+from rebase_grid import RebasePandasClient as V2Pandas
+from rebase_grid import RebaseRawClient as V2Raw
+from rebase_grid.v1 import RebasePandasClient, RebaseRawClient
 
-BASE_URL = "https://grid.rebase.energy/api"
+BASE_URL = "https://grid.rebase.energy/api"  # v1
+V2_BASE_URL = "https://grid-api-ffcps6p2ra-ey.a.run.app/v2"
 TEST_KEY = "test-key"
 
 
@@ -63,3 +66,16 @@ def price_payload() -> dict:
         },
         "provenance": {"category": "measured", "kind": "spot"},
     }
+
+
+# --------------------------------------------------------------------------- #
+# API v2
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def v2_raw() -> V2Raw:
+    return V2Raw(api_key=TEST_KEY)
+
+
+@pytest.fixture
+def v2_pandas() -> V2Pandas:
+    return V2Pandas(api_key=TEST_KEY)
